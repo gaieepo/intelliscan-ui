@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+
+{% block title %}3D-IntelliScan Pipeline - AI-Powered 3D Metrology{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+    <!-- Chart.js for Metrology Graphs -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0"></script>
+    
+    <div class="text-center mb-4">
+        <h1 class="display-6 fw-bold text-gradient">3D Metrology Comparison</h1>
+        <p class="lead text-muted small">Compare two samples side-by-side</p>
+    </div>
+
+    <!-- View Toggle -->
+    <div class="d-flex justify-content-center mb-4">
+        <div class="btn-group" role="group">
+            <input type="radio" class="btn-check" name="viewMode" id="modeSingle" autocomplete="off" checked onclick="window.toggleView('single')">
+            <label class="btn btn-outline-primary" for="modeSingle">Single View</label>
+
+            <input type="radio" class="btn-check" name="viewMode" id="modeCompare" autocomplete="off" onclick="window.toggleView('compare')">
+            <label class="btn btn-outline-primary" for="modeCompare">Comparative View</label>
+        </div>
+    </div>
+
+    <div class="row">
+        {% for side in ['left', 'right'] %}
+        <div id="col-{{ side }}" class="col-lg-6 {{ 'border-end' if side == 'left' else '' }}">
+            <h4 id="header-{{ side }}" class="text-center mb-3 text-uppercase text-muted">{{ side }} Sample</h4>
+            
+            <!-- Control Panel -->
+            <div class="card shadow-sm border-0 mb-4 bg-light">
+                <div class="card-body p-3">
+                    <!-- Merged Selection Panel -->
+                    <div class="mb-2">
+                        <label class="form-label small fw-bold">Select Scan</label>
+                        <div class="input-group">
+                            <select id="{{ side }}-sampleSelect" class="form-select form-select-sm">
+                                <option value="">Select sample...</option>
+                                {% for sample in samples %}
+                                <option value="{{ sample.name }}" data-filename="{{ sample.filename or '' }}" data-completed="{{ 'true' if sample.completed else 'false' }}">
+                                    {% if sample.completed %}✅{% else %}🟡{% endif %} {{ sample.name }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <button class="btn btn-primary btn-sm" onclick="loadSample('{{ side }}')">Load / Analyze</button>
+                        </div>
+                    </div>
+                    
+                    <div id="{{ side }}-statusMessage" class="mt-2 text-center small fw-medium text-muted"></div>
+                </div>
+            </div>
+
+            <!-- Pipeline Phases Visualization -->
+            <div id="{{ side }}-pipelinePhases" style="display: none;">
+                
+                <!-- Phase 1: Conversion -->
+                <div class="card mb-3 phase-card" id="{{ side }}-card-conversion">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                            <h5 class="card-title mb-0">📥 Phase 1: Conversion</h5>
+                            <span class="badge bg-secondary status-badge">Pending</span>
+                        </div>
+                        <p class="text-muted small">Converting 3D NIfTI volume to 2D slices for analysis.</p>
+                        <div class="phase-content"></div>
+                    </div>
+                </div>
+
+                <!-- Phase 2: Detection -->
+                <div class="card mb-3 phase-card" id="{{ side }}-card-detection">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                            <h5 class="card-title mb-0">🎯 Phase 2: Detection</h5>
+                            <span class="badge bg-secondary status-badge">Pending</span>
+                        </div>
+                        <p class="text-muted small">Detecting semiconductor bumps</p>
+                        <div class="phase-content"></div>
+                    </div>
+                </div>
+
+                <!-- Phase 3: Segmentation -->
+                <div class="card mb-3 phase-card" id="{{ side }}-card-segmentation">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                            <h5 class="card-title mb-0">🧬 Phase 3: Segmentation</h5>
+                            <span class="badge bg-secondary status-badge">Pending</span>
+                        </div>
+                        <p class="text-muted small">Performing 3D semantic segmentation on detected regions.</p>
+                        <div class="phase-content"></div>
+                    </div>
+                </div>
+
+                <!-- Phase 4: Metrology -->
+                <div class="card mb-3 phase-card" id="{{ side }}-card-metrology">
+                    <div class="card-body">
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                            <h5 class="card-title mb-0">📊 Phase 4: Metrology</h5>
+                            <span class="badge bg-secondary status-badge">Pending</span>
+                        </div>
+                        <p class="text-muted small">Calculating physical measurements and identifying defects.</p>
+                        <div class="phase-content"></div>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Results Section (Hidden initially) -->
+            <div id="{{ side }}-resultsSection" class="card shadow-sm border-0" style="display: none;">
+                <div class="card-header bg-success text-white fw-bold">
+                    Analysis Complete
+                </div>
+                <div class="card-body p-4">
+                    <div class="d-flex gap-3">
+                        <button id="{{ side }}-downloadReportBtn" class="btn btn-outline-danger w-100">
+                            <span>📄</span> PDF Report
+                        </button>
+                        <a id="{{ side }}-csvLink" href="#" class="btn btn-secondary w-100" target="_blank">
+                            <span>📊</span> Download CSV
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Comparison Section -->
+    <div class="row mt-5" id="comparison-section" style="display: none;">
+        <div class="col-12">
+            <div class="card shadow-sm border-0">
+                <div class="card-header bg-primary text-white fw-bold position-relative text-center">
+                    Comparison Metrics
+                    <button class="btn btn-sm btn-light text-primary position-absolute end-0 top-50 translate-middle-y me-3" onclick="exportComparisonCSV()">
+                        <span>💾</span> Export CSV
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover text-center align-middle" id="comparison-table">
+                            <thead class="table-light">
+                                <tr>
+                                    <th scope="col" class="text-start">Metric</th>
+                                    <th scope="col" id="comp-left-header">Left Sample</th>
+                                    <th scope="col" id="comp-right-header">Right Sample</th>
+                                    <th scope="col">Difference</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Rows populated by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Load the app.js which contains handleUpload -->
+<script src="{{ url_for('static', path='app.js') }}?v=51"></script>
+{% endblock %}
