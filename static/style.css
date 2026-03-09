@@ -1,0 +1,15 @@
+:root{
+  --accent:#6f42c1;
+  --muted:#6c757d;
+  --bg:#0f1724;
+}
+body{font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial; background:#f6f8fb; color:#0b1321}
+.hero{background:linear-gradient(135deg,#5b21b6 0%, #06b6d4 100%); color:white}
+.hero-title{font-weight:700; margin:0; font-size:1.6rem}
+.hero-sub{opacity:.9; margin:0}
+.card{border:none}
+.img-grid{display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:10px}
+.img-grid img{width:100%; height:120px; object-fit:cover; border-radius:8px; box-shadow:0 4px 14px rgba(16,24,40,.06)}
+.results .card{background:linear-gradient(180deg,#ffffff 0%, #fbfdff 100%)}
+footer{background:transparent}
+.table{font-size:.9rem}
