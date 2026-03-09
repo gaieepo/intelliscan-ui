@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>3D Model Viewer</title>
+<style>
+html,body,#viewer { margin:0; width:100%; height:100%; overflow:hidden; }
+#status {
+  position:fixed; top:10px; left:10px;
+  background:rgba(0,0,0,.6); color:#fff;
+  padding:8px; border-radius:4px;
+}
+</style>
+</head>
+<body>
+
+<div id="status">Loading…</div>
+<div id="viewer"></div>
+
+<script src="https://unpkg.com/three@0.154.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three@0.154.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://unpkg.com/three@0.154.0/examples/js/controls/OrbitControls.js"></script>
+
+<script>
+(async () => {
+  const p = new URLSearchParams(location.search).get('p');
+  if (!p) return;
+
+  const res = await fetch(`/generate_model?p=${p}`);
+  const { gltf_url } = await res.json();
+
+  const scene = new THREE.Scene();
+  const cam = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, .1, 1000);
+  cam.position.set(3,3,3);
+
+  const renderer = new THREE.WebGLRenderer({ antialias:true });
+  renderer.setSize(innerWidth, innerHeight);
+  document.getElementById('viewer').appendChild(renderer.domElement);
+
+  const controls = new THREE.OrbitControls(cam, renderer.domElement);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 1));
+  const dl = new THREE.DirectionalLight(0xffffff, 1);
+  dl.position.set(1,1,1);
+  scene.add(dl);
+
+  new THREE.GLTFLoader().load(gltf_url, gltf => {
+    scene.add(gltf.scene);
+    document.getElementById('status').innerText = 'Loaded';
+  });
+
+  window.onresize = () => {
+    cam.aspect = innerWidth/innerHeight;
+    cam.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  };
+
+  (function animate(){
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, cam);
+  })();
+})();
+</script>
+
+</body>
+</html>

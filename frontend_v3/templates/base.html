@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}3D-IntelliScan{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <!-- Import NiiVue for 3D NIfTI visualization (local copy to avoid CDN MIME type issues) -->
+  <script src="{{ url_for('static', path='js/niivue.umd.js') }}"></script>
+  <!-- Import Model Viewer for GLTF visualization -->
+  <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js"></script>
+  <style>
+    :root {
+      --primary: #6366f1;
+      --primary-dark: #4f46e5;
+      --primary-light: #818cf8;
+      --secondary: #0ea5e9;
+      --accent: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --dark: #0f172a;
+      --dark-light: #1e293b;
+      --gray-100: #f1f5f9;
+      --gray-200: #e2e8f0;
+      --gray-300: #cbd5e1;
+      --gray-400: #94a3b8;
+      --gray-500: #64748b;
+      --white: #ffffff;
+      --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+      --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+      --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+      --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--gray-100);
+      color: var(--dark);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* Elegant Navbar */
+    .navbar {
+      background: linear-gradient(135deg, var(--dark) 0%, var(--dark-light) 100%) !important;
+      padding: 1rem 2rem;
+      box-shadow: var(--shadow-lg);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .navbar-brand {
+      font-family: 'Inter', sans-serif;
+      font-weight: 700;
+      font-size: 1.5rem;
+      letter-spacing: -0.5px;
+      background: linear-gradient(135deg, var(--primary-light) 0%, var(--secondary) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .navbar-subtitle {
+      font-size: 0.75rem;
+      color: var(--gray-400);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    /* Main Container */
+    main {
+      padding: 2rem;
+      max-width: 1600px;
+      margin: 0 auto;
+    }
+
+    /* Elegant Cards */
+    .card {
+      background: var(--white);
+      border: none;
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      transition: all 0.3s ease;
+    }
+
+    .card:hover {
+      box-shadow: var(--shadow-lg);
+      transform: translateY(-2px);
+    }
+
+    .card-header {
+      background: var(--white);
+      border-bottom: 1px solid var(--gray-200);
+      padding: 1.25rem 1.5rem;
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    .card-body {
+      padding: 1.5rem;
+    }
+
+    /* Phase Cards with Progress */
+    .phase-card {
+      margin-bottom: 1.5rem;
+      border-radius: 16px;
+      overflow: hidden;
+    }
+
+    .phase-card .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--white);
+    }
+
+    .phase-card .card-header .run-phase {
+      margin-left: auto;  /* Pushes the button to the right */
+    }
+
+    .phase-card.completed {
+      border-left: none;
+    }
+
+    .phase-card.completed .card-header {
+      background: linear-gradient(90deg, rgba(16, 185, 129, 0.1) 0%, transparent 100%);
+    }
+
+    /* Modern Buttons */
+    .btn {
+      font-family: 'Inter', sans-serif;
+      font-weight: 500;
+      font-size: 0.875rem;
+      padding: 0.625rem 1.25rem;
+      border-radius: 10px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+      color: var(--white);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .btn-primary:hover {
+      background: linear-gradient(135deg, var(--primary-dark) 0%, var(--primary) 100%);
+      transform: translateY(-1px);
+      box-shadow: var(--shadow);
+    }
+
+    .btn-primary:disabled {
+      background: var(--gray-300);
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .btn-outline-primary {
+      background: transparent;
+      border: 2px solid var(--primary);
+      color: var(--primary);
+    }
+
+    .btn-outline-primary:hover {
+      background: var(--primary);
+      color: var(--white);
+    }
+
+    .btn-outline-secondary {
+      background: transparent;
+      border: 2px solid var(--gray-300);
+      color: var(--gray-600);
+    }
+
+    .btn-outline-secondary:hover {
+      background: var(--gray-100);
+      border-color: var(--gray-400);
+      color: var(--gray-600);
+    }
+
+    .btn-success {
+      background: linear-gradient(135deg, var(--accent) 0%, #059669 100%);
+      color: var(--white);
+    }
+
+    .btn-secondary {
+      background: var(--gray-200);
+      color: var(--gray-600);
+    }
+
+    .btn-secondary:hover {
+      background: var(--gray-300);
+      color: var(--gray-700);
+    }
+
+    /* Progress Bar */
+    .progress {
+      height: 8px;
+      background: var(--gray-200);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .progress-bar {
+      background: linear-gradient(90deg, var(--primary) 0%, var(--secondary) 50%, var(--accent) 100%);
+      border-radius: 10px;
+      transition: width 0.5s ease;
+    }
+
+    /* Form Controls */
+    .form-select {
+      font-family: 'Inter', sans-serif;
+      padding: 0.75rem 1rem;
+      border: 2px solid var(--gray-200);
+      border-radius: 10px;
+      font-size: 0.95rem;
+      transition: all 0.2s ease;
+      background-color: var(--white);
+    }
+
+    .form-select:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+      outline: none;
+    }
+
+    /* Alerts */
+    .alert {
+      border: none;
+      border-radius: 12px;
+      padding: 1rem 1.5rem;
+      font-weight: 500;
+    }
+
+    .alert-info {
+      background: linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(14, 165, 233, 0.1) 100%);
+      color: var(--primary-dark);
+      border: 1px solid rgba(99, 102, 241, 0.2);
+    }
+
+    .alert-success {
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(5, 150, 105, 0.1) 100%);
+      color: #065f46;
+      border: 1px solid rgba(16, 185, 129, 0.2);
+    }
+
+    /* Section Headers */
+    h2 {
+      font-weight: 700;
+      font-size: 1.75rem;
+      color: var(--dark);
+      margin-bottom: 0.5rem;
+      letter-spacing: -0.5px;
+    }
+
+    h5 {
+      font-weight: 600;
+      color: var(--dark);
+      letter-spacing: -0.3px;
+    }
+
+    h6 {
+      font-weight: 600;
+      font-size: 0.875rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* Text Colors */
+    .text-success {
+      color: var(--accent) !important;
+    }
+
+    .text-danger {
+      color: var(--danger) !important;
+    }
+
+    .text-info {
+      color: var(--secondary) !important;
+    }
+
+    .text-muted {
+      color: var(--gray-500) !important;
+    }
+
+    /* Niivue Canvas Styles */
+    .niivue-container {
+      position: relative !important;
+      width: 100% !important;
+      height: 350px !important;
+      display: block !important;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+
+    .niivue-container canvas {
+      position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+      border-radius: 12px;
+    }
+
+    #nv-full {
+      height: 350px !important;
+      margin-bottom: 1.5rem;
+    }
+
+    #nv-good, #nv-bad {
+      height: 200px !important;
+      border-radius: 12px;
+    }
+
+    /* 2D Slice Images */
+    .slice-img {
+      background: var(--dark);
+      padding: 6px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .slice-img:hover {
+      transform: scale(1.05);
+      box-shadow: var(--shadow-lg);
+    }
+
+    .bump-slices-container {
+      margin-bottom: 12px;
+    }
+
+    /* Bump Visualization */
+    #bump-visualization .col-6 {
+      padding: 12px;
+    }
+
+    /* Conversion Images */
+    .conversion-img {
+      width: 100%;
+      height: auto;
+      border-radius: 8px;
+      box-shadow: var(--shadow-sm);
+      transition: all 0.3s ease;
+    }
+
+    .conversion-img:hover {
+      transform: scale(1.02);
+      box-shadow: var(--shadow);
+    }
+
+    /* Table Styles */
+    .table {
+      font-size: 0.875rem;
+    }
+
+    .table thead th {
+      background: var(--gray-100);
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 0.75rem;
+      letter-spacing: 0.5px;
+      color: var(--gray-600);
+      border-bottom: 2px solid var(--gray-200);
+      padding: 1rem;
+    }
+
+    .table tbody td {
+      padding: 1rem;
+      vertical-align: middle;
+      border-bottom: 1px solid var(--gray-100);
+    }
+
+    .table tbody tr:hover {
+      background: var(--gray-100);
+    }
+
+    /* Bump Labels */
+    .bump-label {
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      main {
+        padding: 1rem;
+      }
+      
+      .navbar {
+        padding: 1rem;
+      }
+      
+      .card-body {
+        padding: 1rem;
+      }
+      
+      .niivue-container {
+        height: 250px !important;
+      }
+    }
+
+    /* Animations */
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .card {
+      animation: fadeIn 0.4s ease-out;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .processing {
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    /* Phase Icons */
+    .phase-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+      margin-right: 12px;
+    }
+
+    .phase-icon.conversion {
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+      color: white;
+    }
+
+    .phase-icon.detection {
+      background: linear-gradient(135deg, #0ea5e9 0%, #06b6d4 100%);
+      color: white;
+    }
+
+    .phase-icon.segmentation {
+      background: linear-gradient(135deg, #10b981 0%, #34d399 100%);
+      color: white;
+    }
+
+    .phase-icon.metrology {
+      background: linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%);
+      color: white;
+    }
+  </style>
+  {% block extra_css %}{% endblock %}
+</head>
+<body>
+  <nav class="navbar navbar-expand-lg">
+    <div class="container-fluid">
+      <span class="navbar-brand">3D-IntelliScan</span>
+      <div class="d-flex align-items-center gap-3">
+        <span class="navbar-subtitle">AI-Powered 3D Metrology & Defect Detection</span>
+      </div>
+  </nav>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

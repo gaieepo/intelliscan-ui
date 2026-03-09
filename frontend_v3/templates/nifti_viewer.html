@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>NIfTI Viewer</title>
+
+  <!-- Use local niivue to avoid CDN MIME type issues -->
+  <script src="{{ url_for('static', filename='js/niivue.umd.js') }}"></script>
+
+  <style>
+    body {
+      margin: 0;
+      background: #111;
+      color: white;
+      font-family: sans-serif;
+    }
+    #gl {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+    }
+    .toolbar {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 10;
+      background: rgba(0,0,0,0.6);
+      padding: 8px;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="toolbar">
+  <button onclick="nv.setSliceType(nv.sliceTypeAxial)">Axial</button>
+  <button onclick="nv.setSliceType(nv.sliceTypeSagittal)">Sagittal</button>
+  <button onclick="nv.setSliceType(nv.sliceTypeCoronal)">Coronal</button>
+  <button onclick="nv.setSliceType(nv.sliceTypeVolume)">3D</button>
+</div>
+
+<canvas id="gl"></canvas>
+
+<script>
+  const nv = new niivue.Niivue({
+    show3Dcrosshair: true,
+    backColor: [0, 0, 0, 1]
+  })
+
+  nv.attachTo("gl")
+
+  nv.loadVolumes([
+    {
+      url: "/file/{{ nifti_path }}",
+      name: "Segmentation",
+      colormap: "viridis",
+      opacity: 1.0
+    }
+  ])
+</script>
+
+</body>
+</html>
