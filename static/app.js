@@ -5,7 +5,7 @@
 
 // Global state
 const pollIntervals = { left: null, right: null };
-const currentSamples = { left: null, right: null };
+const currentSamples = { left: { id: null, tag: null }, right: { id: null, tag: null } };
 const detectionCache = {}; // Stores detection data per sample
 const detectionState = { left: { view: 'view1', slice: 0 }, right: { view: 'view1', slice: 0 } };
 
@@ -173,8 +173,10 @@ async function handleUpload(side) {
  */
 window.loadSample = async function(side) {
     const select = document.getElementById(`${side}-sampleSelect`);
+    const modelSelect = document.getElementById(`${side}-modelSelect`);
     const option = select.options[select.selectedIndex];
     const sampleId = select.value;
+    const tag = modelSelect.value;
     
     if (!sampleId) {
         alert("Please select a sample first.");
@@ -182,7 +184,6 @@ window.loadSample = async function(side) {
     }
 
     const filename = option.dataset.filename;
-    const isCompleted = option.dataset.completed === 'true';
     
     // Reset UI to clear previous sample data
     const resultsSection = document.getElementById(`${side}-resultsSection`);
@@ -203,29 +204,29 @@ window.loadSample = async function(side) {
         pipelinePhases.style.display = 'block';
     }
     
-    // Trigger processing if not completed and filename is available
-    if (!isCompleted && filename) {
+    // Trigger processing if a filename is available (for re-running)
+    if (filename) {
         const statusDiv = document.getElementById(`${side}-statusMessage`);
         if (statusDiv) {
             statusDiv.innerText = "Starting analysis for existing sample...";
             statusDiv.className = "mt-4 text-center fw-medium text-primary";
         }
         try {
-            await fetch(`/api/process/${sampleId}/${filename}?force=false`, { method: "POST" });
+            await fetch(`/api/process/${sampleId}/${filename}?force=false&tag=${tag || ''}`, { method: "POST" });
         } catch (e) {
             console.error("Error triggering process:", e);
         }
     }
     
     // Start polling immediately for the existing sample
-    startPolling(side, null, sampleId);
+    startPolling(side, null, sampleId, tag);
 }
 
 /**
  * Poll the backend for job status.
  */
-function startPolling(side, inputPath, sampleId) {
-    currentSamples[side] = sampleId;
+function startPolling(side, inputPath, sampleId, tag) {
+    currentSamples[side] = { id: sampleId, tag: tag };
     const statusDiv = document.getElementById(`${side}-statusMessage`);
     const uploadBtn = document.getElementById(`${side}-uploadBtn`);
     
@@ -234,15 +235,15 @@ function startPolling(side, inputPath, sampleId) {
     pollIntervals[side] = setInterval(async () => {
         try {
             // Poll the granular status endpoint
-            const response = await fetch(`/api/status/${sampleId}`);
+            const response = await fetch(`/api/status/${sampleId}?tag=${tag || ''}`);
             const status = await response.json();
             
             const effectiveId = status.output_id || sampleId;
 
-            updatePhaseUI(side, 'conversion', status.conversion, status.data, effectiveId, status.durations?.conversion);
-            updatePhaseUI(side, 'detection', status.detection, status.data, effectiveId, status.durations?.detection);
-            updatePhaseUI(side, 'segmentation', status.segmentation, status.data, effectiveId, status.durations?.segmentation);
-            updatePhaseUI(side, 'metrology', status.metrology, status.data, effectiveId, status.durations?.metrology);
+            updatePhaseUI(side, 'conversion', status.conversion, status.data, sampleId, status.durations?.conversion, tag);
+            updatePhaseUI(side, 'detection', status.detection, status.data, sampleId, status.durations?.detection, tag);
+            updatePhaseUI(side, 'segmentation', status.segmentation, status.data, sampleId, status.durations?.segmentation, tag);
+            updatePhaseUI(side, 'metrology', status.metrology, status.data, sampleId, status.durations?.metrology, tag);
 
             if (status.completed) {
                 clearInterval(pollIntervals[side]);
@@ -251,7 +252,7 @@ function startPolling(side, inputPath, sampleId) {
                     statusDiv.className = "mt-4 text-center fw-bold text-success";
                 }
                 if (uploadBtn) uploadBtn.disabled = false;
-                displayResults(side, effectiveId);
+                displayResults(side, sampleId, tag);
                 updateComparison();
             }
         } catch (e) {
@@ -263,11 +264,11 @@ function startPolling(side, inputPath, sampleId) {
 /**
  * Helper to load bump analysis data and UI.
  */
-function loadBumpAnalysis(side, sampleId, card) {
+function loadBumpAnalysis(side, sampleId, card, tag) {
     if (card.querySelector('.bump-analysis-section') || card.dataset.loadingBumps === 'true') return;
     
     card.dataset.loadingBumps = 'true';
-    fetch(`/api/bumps/${sampleId}`)
+    fetch(`/api/bumps/${sampleId}?tag=${tag || ''}`)
         .then(res => res.json())
         .then(bumps => {
             if (bumps.good.length > 0 || bumps.bad.length > 0) {
@@ -283,7 +284,7 @@ function loadBumpAnalysis(side, sampleId, card) {
                         <div class="row g-3">
                             <div class="col-md-6">
                                 <label class="small fw-bold text-success mb-1">Good Bumps</label>
-                                <select class="form-select form-select-sm mb-2" onchange="window.loadBumpModel('${sampleId}', this, 'good-bump-viewer-${side}')">
+                                <select class="form-select form-select-sm mb-2" onchange="window.loadBumpModel('${sampleId}', this, 'good-bump-viewer-${side}', '${tag || ''}')">
                                     <option value="">Select a bump...</option>
                                     ${bumps.good.map(b => `<option value="${b.id}" data-pos='${JSON.stringify(b.position || null)}'>${b.label}</option>`).join('')}
                                 </select>
@@ -292,13 +293,18 @@ function loadBumpAnalysis(side, sampleId, card) {
                             </div>
                             <div class="col-md-6">
                                 <label class="small fw-bold text-danger mb-1">Defective Bumps</label>
-                                <select class="form-select form-select-sm mb-2" onchange="window.loadBumpModel('${sampleId}', this, 'bad-bump-viewer-${side}')">
+                                <select class="form-select form-select-sm mb-2" onchange="window.loadBumpModel('${sampleId}', this, 'bad-bump-viewer-${side}', '${tag || ''}')">
                                     <option value="">Select a bump...</option>
                                     ${bumps.bad.map(b => `<option value="${b.id}" data-pos='${JSON.stringify(b.position || null)}'>${b.label}</option>`).join('')}
                                 </select>
                                 <model-viewer id="bad-bump-viewer-${side}" camera-controls auto-rotate style="width: 100%; height: 200px; background-color: #1e293b; border-radius: 6px;" shadow-intensity="1"></model-viewer>
                                 ${window.getLayerControls(`bad-bump-viewer-${side}`)}
                             </div>
+                        </div>
+                        <div class="mt-3 text-center">
+                            <button class="btn btn-outline-primary btn-sm" onclick="window.viewAllBumps('${sampleId}', '${tag || ''}')">
+                                View All Bumps (3D Grid)
+                            </button>
                         </div>
                     </div>
                 `;
@@ -314,7 +320,7 @@ function loadBumpAnalysis(side, sampleId, card) {
 /**
  * Update the UI card for a specific phase.
  */
-function updatePhaseUI(side, phase, status, data, sampleId, duration) {
+function updatePhaseUI(side, phase, status, data, sampleId, duration, tag) {
     const card = document.getElementById(`${side}-card-${phase}`);
     if (!card) return;
 
@@ -330,7 +336,7 @@ function updatePhaseUI(side, phase, status, data, sampleId, duration) {
             const content = card.querySelector('.phase-content');
             if (content) {
                 // Fetch detection details
-                fetch(`/api/detection_preview/${sampleId}`)
+                fetch(`/api/detection_preview/${sampleId}?tag=${tag || ''}`)
                     .then(res => res.json())
                     .then(detData => {
                         console.log("Received detection preview data:", detData);
@@ -339,49 +345,67 @@ function updatePhaseUI(side, phase, status, data, sampleId, duration) {
                         
                         // Generate unique IDs for this side
                         const uniqueId = `${side}-${sampleId}`;
-                        const imgId = `det-img-${uniqueId}`;
-                        const canvasId = `det-canvas-${uniqueId}`;
-                        const sliderId = `det-slider-${uniqueId}`;
-                        const counterId = `det-counter-${uniqueId}`;
                         
                         // Determine available views
                         const hasView1 = detData.view1 && detData.view1.length > 0;
                         const hasView2 = detData.view2 && detData.view2.length > 0;
                         
-                        // Set initial view
-                        detectionState[side].view = hasView1 ? 'view1' : (hasView2 ? 'view2' : null);
-                        detectionState[side].slice = 0;
+                        let html = '<div class="row g-2">';
 
-                        if (hasView1 || hasView2) {
-                            const currentView = detectionState[side].view;
-                            const frames = detData[currentView];
+                        if (hasView1) {
+                            const frames = detData.view1;
                             const maxSlice = frames.length - 1;
+                            const baseId = `view1-${uniqueId}`; // ID specific to view1
                             
-                            content.innerHTML = `
-                                <div class="d-flex justify-content-between align-items-center mt-2 mb-1">
-                                    <div class="d-flex align-items-center gap-2">
-                                        <div class="btn-group btn-group-sm" role="group">
-                                            ${hasView1 ? `<input type="radio" class="btn-check" name="view-switch-${uniqueId}" id="v1-${uniqueId}" autocomplete="off" checked onclick="window.setDetectionView('${side}', '${sampleId}', 'view1')"><label class="btn btn-outline-primary" for="v1-${uniqueId}">View 1</label>` : ''}
-                                            ${hasView2 ? `<input type="radio" class="btn-check" name="view-switch-${uniqueId}" id="v2-${uniqueId}" autocomplete="off" ${!hasView1 ? 'checked' : ''} onclick="window.setDetectionView('${side}', '${sampleId}', 'view2')"><label class="btn btn-outline-primary" for="v2-${uniqueId}">View 2</label>` : ''}
-                                        </div>
-                                        <div class="form-check form-switch mb-0">
-                                            <input class="form-check-input" type="checkbox" id="bbox-toggle-${uniqueId}" checked onchange="window.toggleBBoxes('${canvasId}', this)">
-                                            <label class="form-check-label small" for="bbox-toggle-${uniqueId}">Boxes</label>
-                                        </div>
+                            html += `
+                            <div class="${hasView2 ? 'col-md-6' : 'col-12'}">
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <span class="badge bg-primary bg-opacity-75">View 1 (Horizontal)</span>
+                                    <div class="form-check form-switch mb-0">
+                                        <input class="form-check-input" type="checkbox" id="bbox-toggle-${baseId}" checked onchange="window.toggleBBoxes('${side}', '${sampleId}', this)">
+                                        <label class="form-check-label small text-muted" for="bbox-toggle-${baseId}">Boxes</label>
                                     </div>
-                                    <span class="badge bg-secondary" id="${counterId}">Slice: 1/${frames.length}</span>
+                                    <span class="badge bg-secondary" id="counter-${baseId}">1/${frames.length}</span>
                                 </div>
-                                <div class="detection-preview position-relative mt-2">
-                                    <img id="${imgId}" class="img-fluid rounded border w-100" style="min-height: 200px; background: #000;">
-                                    <canvas id="${canvasId}" class="position-absolute top-0 start-0 w-100 h-100" style="pointer-events: auto;"></canvas>
+                                <div class="detection-preview position-relative">
+                                    <img id="img-${baseId}" class="img-fluid rounded border w-100" style="min-height: 200px; background: #000; object-fit: contain;">
+                                    <canvas id="canvas-${baseId}" class="position-absolute top-0 start-0 w-100 h-100" style="pointer-events: auto;"></canvas>
                                 </div>
-                                <div class="mt-2">
-                                    <input type="range" class="form-range" id="${sliderId}" min="0" max="${maxSlice}" value="0" oninput="window.updateDetectionFrame('${side}', '${sampleId}', this.value)">
-                                </div>`;
-                                
-                            // Initialize first frame
-                            setTimeout(() => window.updateDetectionFrame(side, sampleId, 0), 100);
+                                <input type="range" class="form-range mt-2" min="0" max="${maxSlice}" value="0" oninput="window.updateDetectionFrame('${side}', '${sampleId}', this.value, 'view1')">
+                            </div>`;
                         }
+
+                        if (hasView2) {
+                            const frames = detData.view2;
+                            const maxSlice = frames.length - 1;
+                            const baseId = `view2-${uniqueId}`; // ID specific to view2
+                            
+                            html += `
+                            <div class="${hasView1 ? 'col-md-6' : 'col-12'}">
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <span class="badge bg-info bg-opacity-75 text-dark">View 2 (Vertical)</span>
+                                        <div class="form-check form-switch mb-0">
+                                        <input class="form-check-input" type="checkbox" id="bbox-toggle-${baseId}" checked onchange="window.toggleBBoxes('${side}', '${sampleId}', this)">
+                                        <label class="form-check-label small text-muted" for="bbox-toggle-${baseId}">Boxes</label>
+                                    </div>
+                                    <span class="badge bg-secondary" id="counter-${baseId}">1/${frames.length}</span>
+                                </div>
+                                <div class="detection-preview position-relative">
+                                    <img id="img-${baseId}" class="img-fluid rounded border w-100" style="min-height: 200px; background: #000; object-fit: contain;">
+                                    <canvas id="canvas-${baseId}" class="position-absolute top-0 start-0 w-100 h-100" style="pointer-events: auto;"></canvas>
+                                </div>
+                                <input type="range" class="form-range mt-2" min="0" max="${maxSlice}" value="0" oninput="window.updateDetectionFrame('${side}', '${sampleId}', this.value, 'view2')">
+                            </div>`;
+                        }
+                        
+                        html += '</div>';
+                        content.innerHTML = html;
+
+                        // Initialize frames
+                        setTimeout(() => {
+                            if (hasView1) window.updateDetectionFrame(side, sampleId, 0, 'view1');
+                            if (hasView2) window.updateDetectionFrame(side, sampleId, 0, 'view2');
+                        }, 100);
                     })
                     .catch(e => console.error("Error loading detection preview:", e));
             }
@@ -398,7 +422,7 @@ function updatePhaseUI(side, phase, status, data, sampleId, duration) {
                     }
 
                     card.dataset.loadingModel = 'true';
-                    fetch(`/api/model/${sampleId}`)
+                    fetch(`/api/model/${sampleId}?tag=${tag || ''}`)
                         .then(res => res.json())
                         .then(data => {
                             let htmlContent = '';
@@ -422,7 +446,7 @@ function updatePhaseUI(side, phase, status, data, sampleId, duration) {
                                     </div>
                                     ${window.getLayerControls(viewerId)}`;
                                 content.innerHTML = htmlContent;
-                                loadBumpAnalysis(side, sampleId, card);
+                                loadBumpAnalysis(side, sampleId, card, tag);
                             } else {
                                 content.innerHTML = '<div class="alert alert-warning">Model not available</div>';
                             }
@@ -440,7 +464,7 @@ function updatePhaseUI(side, phase, status, data, sampleId, duration) {
             // 2. Load Bump Analysis (only if model is loaded and bumps are missing)
             // This runs on every poll until bumps are successfully loaded
             if (card.querySelector('model-viewer') && !card.querySelector('.bump-analysis-section')) {
-                loadBumpAnalysis(side, sampleId, card);
+                loadBumpAnalysis(side, sampleId, card, tag);
             }
         }
 
@@ -448,7 +472,7 @@ function updatePhaseUI(side, phase, status, data, sampleId, duration) {
         if (phase === 'metrology' && !card.querySelector('.metrology-charts')) {
             const content = card.querySelector('.phase-content');
             if (content) {
-                window.renderMetrologyCharts(sampleId, content, side);
+                window.renderMetrologyCharts(sampleId, content, side, tag);
             }
         }
         
@@ -477,64 +501,69 @@ function updatePhaseUI(side, phase, status, data, sampleId, duration) {
 /**
  * Show results when complete.
  */
-function displayResults(side, sampleId) {
+function displayResults(side, sampleId, tag) {
     const resultsSection = document.getElementById(`${side}-resultsSection`);
     if (resultsSection) resultsSection.style.display = 'block';
 
     const downloadBtn = document.getElementById(`${side}-downloadReportBtn`);
     if (downloadBtn) {
-        downloadBtn.onclick = () => window.open(`/api/report/${sampleId}`, '_blank');
+        downloadBtn.onclick = () => window.open(`/api/report/${sampleId}?tag=${tag || ''}`, '_blank');
     }
     
     const csvLink = document.getElementById(`${side}-csvLink`);
+    let baseId = sampleId;
+    const match = sampleId.match(/SN\d+/);
+    if (match) {
+        baseId = match[0];
+    }
+    const folderName = tag ? `${baseId}_${tag}` : baseId;
     if (csvLink) {
-        csvLink.href = `/output/${sampleId}/metrology/metrology.csv`;
+        csvLink.href = `/output/${folderName}/metrology/metrology.csv`;
     }
 }
 
 /**
  * Update the detection frame based on slider input.
  */
-window.updateDetectionFrame = function(side, sampleId, index) {
+window.updateDetectionFrame = function(side, sampleId, index, viewName) {
     const data = detectionCache[sampleId];
     if (!data) return;
 
-    const view = detectionState[side].view;
+    // Use viewName if provided (new behavior), otherwise fallback to state (legacy)
+    const view = viewName || detectionState[side].view;
     const frames = data[view];
     if (!frames || !frames[index]) return;
 
     const frame = frames[index];
     const uniqueId = `${side}-${sampleId}`;
-    const img = document.getElementById(`det-img-${uniqueId}`);
-    const canvasId = `det-canvas-${uniqueId}`;
-    const counter = document.getElementById(`det-counter-${uniqueId}`);
+    
+    // Construct IDs based on the view
+    const baseId = `${view}-${uniqueId}`;
+    const imgId = `img-${baseId}`;
+    const canvasId = `canvas-${baseId}`;
+    const counterId = `counter-${baseId}`;
+
+    const img = document.getElementById(imgId);
+    const counter = document.getElementById(counterId);
 
     if (img) {
         img.src = frame.image_url;
         // Draw boxes once image loads
         img.onload = () => {
-            window.drawDetectionBoxes(canvasId, img.id, frame.bboxes);
+            window.drawDetectionBoxes(canvasId, imgId, frame.bboxes);
         };
+        // Handle case where image loads immediately from cache
+        if (img.complete && img.naturalWidth > 0) {
+             window.drawDetectionBoxes(canvasId, imgId, frame.bboxes);
+        }
     }
     
     if (counter) {
-        counter.innerText = `Slice: ${parseInt(index) + 1}/${frames.length}`;
+        counter.innerText = `${parseInt(index) + 1}/${frames.length}`;
     }
     
-    detectionState[side].slice = index;
-}
-
-/**
- * Switch detection view (View 1 / View 2).
- */
-window.setDetectionView = function(side, sampleId, viewName) {
-    detectionState[side].view = viewName;
-    const uniqueId = `${side}-${sampleId}`;
-    const slider = document.getElementById(`det-slider-${uniqueId}`);
-    
-    // Reset slider to 0 and update
-    if (slider) slider.value = 0;
-    window.updateDetectionFrame(side, sampleId, 0);
+    // Update state cache if not multi-view or generic update
+    if (!viewName) detectionState[side].slice = index;
 }
 
 /**
@@ -648,28 +677,190 @@ window.drawDetectionBoxes = function(canvasId, imgId, bboxes) {
 }
 
 /**
- * Toggle bounding box visibility.
+ * Toggle bounding box visibility for all views of a sample simultaneously.
  */
-window.toggleBBoxes = function(canvasId, checkbox) {
-    const canvas = document.getElementById(canvasId);
-    if (canvas) {
-        canvas.style.visibility = checkbox.checked ? 'visible' : 'hidden';
-        if (!checkbox.checked) {
-            const tooltip = document.getElementById('bbox-tooltip');
-            if (tooltip) tooltip.style.display = 'none';
-        }
+window.toggleBBoxes = function(side, sampleId, sourceCheckbox) {
+    const isChecked = sourceCheckbox.checked;
+    
+    ['view1', 'view2'].forEach(view => {
+        const baseId = `${view}-${side}-${sampleId}`;
+        const canvas = document.getElementById(`canvas-${baseId}`);
+        const checkbox = document.getElementById(`bbox-toggle-${baseId}`);
+        
+        if (canvas) canvas.style.visibility = isChecked ? 'visible' : 'hidden';
+        if (checkbox && checkbox !== sourceCheckbox) checkbox.checked = isChecked;
+    });
+
+    if (!isChecked) {
+        const tooltip = document.getElementById('bbox-tooltip');
+        if (tooltip) tooltip.style.display = 'none';
     }
+}
+
+/**
+ * Open a new window to view all bumps in a single 3D scene (Grid View).
+ */
+window.viewAllBumps = function(sampleId, tag) {
+    // Open in new tab by excluding window features
+    const win = window.open('', '_blank');
+    if (!win) return alert("Please allow popups for this site");
+    
+    fetch(`/api/bumps/${sampleId}?tag=${tag || ''}`)
+        .then(res => res.json())
+        .then(bumps => {
+            
+            const allBumps = [...bumps.good, ...bumps.bad];
+            const badIds = new Set(bumps.bad.map(b => b.id));
+            
+            win.document.write(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>All Bumps - ${sampleId}</title>
+                    <style>body { margin: 0; overflow: hidden; background: #111; color: #fff; font-family: sans-serif; }</style>
+                    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+                    <script type="importmap">
+                      {
+                        "imports": {
+                          "three": "https://unpkg.com/three@0.154.0/build/three.module.js",
+                          "three/addons/": "https://unpkg.com/three@0.154.0/examples/jsm/"
+                        }
+                      }
+                    </script>
+                </head>
+                <body>
+                    <div style="position: absolute; top: 10px; left: 10px; z-index: 100; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 4px;">
+                        <h3 style="margin: 0 0 5px;">${sampleId} Bump Grid</h3>
+                        <span style="color: #4ade80">● Good: ${bumps.good.length}</span> | 
+                        <span style="color: #ef4444">● Defective: ${bumps.bad.length}</span>
+                        <div class="small" style="margin-top: 5px; color: #aaa;">Left Click: Rotate | Right Click: Pan | Scroll: Zoom</div>
+                    </div>
+                    <script type="module">
+                        import * as THREE from 'three';
+                        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+                        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+                        import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+                        import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+
+                        const scene = new THREE.Scene();
+                        scene.background = new THREE.Color(0x111111);
+                        
+                        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+                        camera.position.set(0, 40, 40);
+                        
+                        const renderer = new THREE.WebGLRenderer({ antialias: true });
+                        renderer.setSize(window.innerWidth, window.innerHeight);
+                        document.body.appendChild(renderer.domElement);
+                        
+                        const controls = new OrbitControls(camera, renderer.domElement);
+                        controls.enableDamping = true;
+                        
+                        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+                        scene.add(ambientLight);
+                        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+                        dirLight.position.set(10, 20, 10);
+                        scene.add(dirLight);
+
+                        const loader = new GLTFLoader();
+                        const fontLoader = new FontLoader();
+                        
+                        const bumps = ${JSON.stringify(allBumps)};
+                        const badIds = new Set(${JSON.stringify([...badIds])});
+                        
+                        const gridSize = Math.ceil(Math.sqrt(bumps.length));
+                        const spacing = 4.0;
+                        
+                        // Load font for labels
+                        fontLoader.load('https://unpkg.com/three@0.154.0/examples/fonts/helvetiker_regular.typeface.json', (font) => {
+                            
+                            bumps.forEach((bump, index) => {
+                                const apiUrl = \`/api/bump_model/${sampleId}/\${bump.id}?tag=${tag || ''}\`;
+                                
+                                // Fetch the actual GLTF URL from API (since the endpoint returns JSON {url: "..."})
+                                fetch(apiUrl)
+                                    .then(res => res.json())
+                                    .then(data => {
+                                        if (!data.url) return;
+                                        
+                                        const row = Math.floor(index / gridSize);
+                                        const col = index % gridSize;
+                                        const x = (col - gridSize/2) * spacing;
+                                        const z = (row - gridSize/2) * spacing;
+                                        
+                                        loader.load(data.url, (gltf) => {
+                                            const model = gltf.scene;
+                                            const box = new THREE.Box3().setFromObject(model);
+                                            const center = box.getCenter(new THREE.Vector3());
+                                            model.position.sub(center); // Center geometry
+                                            
+                                            const group = new THREE.Group();
+                                            group.add(model);
+                                            group.position.set(x, 0, z);
+                                            
+                                            // Status Ring
+                                            const isBad = badIds.has(bump.id);
+                                            const color = isBad ? 0xef4444 : 0x4ade80;
+                                            const ringGeo = new THREE.RingGeometry(1.2, 1.3, 32);
+                                            const ringMat = new THREE.MeshBasicMaterial({ color: color, side: THREE.DoubleSide });
+                                            const ring = new THREE.Mesh(ringGeo, ringMat);
+                                            ring.rotation.x = -Math.PI / 2;
+                                            group.add(ring);
+
+                                            // Text Label
+                                            const labelText = bump.label.replace('Bump ', ''); // Turns "Bump 12 (Void)" into "12 (Void)"
+                                            const textGeo = new TextGeometry(labelText, {
+                                                font: font,
+                                                size: 0.3,
+                                                height: 0.05,
+                                            });
+                                            textGeo.computeBoundingBox();
+                                            const textWidth = textGeo.boundingBox.max.x - textGeo.boundingBox.min.x;
+                                            const textMat = new THREE.MeshBasicMaterial({ color: isBad ? 0xffcccc : 0xffffff });
+                                            const textMesh = new THREE.Mesh(textGeo, textMat);
+                                            textMesh.position.set(-textWidth / 2, 2.0, 0); // Position above bump
+                                            
+                                            group.add(textMesh);
+                                            
+                                            scene.add(group);
+                                        });
+                                    })
+                                    .catch(e => console.error("Error loading bump model:", e));
+                            });
+                        });
+
+                        function animate() {
+                            requestAnimationFrame(animate);
+                            controls.update();
+                            renderer.render(scene, camera);
+                        }
+                        
+                        window.addEventListener('resize', () => {
+                            camera.aspect = window.innerWidth / window.innerHeight;
+                            camera.updateProjectionMatrix();
+                            renderer.setSize(window.innerWidth, window.innerHeight);
+                        });
+
+                        animate();
+                    </script>
+                </body></html>`);
+            win.document.close();
+        })
+        .catch(e => {
+            if(win) win.close();
+            alert("Error viewing bumps: " + e.message);
+        });
 }
 
 /**
  * Load a specific bump model into a viewer.
  */
-window.loadBumpModel = function(sampleId, selectOrId, viewerId) {
+window.loadBumpModel = function(sampleId, selectOrId, viewerId, tag) {
     let bumpId = selectOrId;
     let position = null;
     
     if (typeof selectOrId === 'object') {
         bumpId = selectOrId.value;
+        if (!bumpId) return; // Do nothing if "Select a bump..." is chosen
         const option = selectOrId.options[selectOrId.selectedIndex];
         if (option.dataset.pos) {
             position = JSON.parse(option.dataset.pos);
@@ -698,7 +889,7 @@ window.loadBumpModel = function(sampleId, selectOrId, viewerId) {
     loader.style.display = 'block';
     viewer.style.opacity = '0.3';
     
-    fetch(`/api/bump_model/${sampleId}/${bumpId}`)
+    fetch(`/api/bump_model/${sampleId}/${bumpId}?tag=${tag || ''}`)
         .then(res => {
             if (!res.ok) throw new Error(`Status ${res.status}`);
             return res.json();
@@ -816,7 +1007,7 @@ window.resetLayerControls = function(viewerId) {
 /**
  * Render Metrology Charts using Chart.js
  */
-window.renderMetrologyCharts = function(sampleId, container, side) {
+window.renderMetrologyCharts = function(sampleId, container, side, tag) {
     container.innerHTML = `
         <div class="metrology-charts row g-3 mt-2">
             <div class="col-md-6">
@@ -847,7 +1038,7 @@ window.renderMetrologyCharts = function(sampleId, container, side) {
         Chart.register(ChartDataLabels);
     }
 
-    fetch(`/api/metrology_stats/${sampleId}`)
+    fetch(`/api/metrology_stats/${sampleId}?tag=${tag || ''}`)
         .then(res => res.json())
         .then(data => {
             // Pie Chart
@@ -955,9 +1146,10 @@ window.renderMetrologyCharts = function(sampleId, container, side) {
  * Update the comparison table if both samples are available.
  */
 window.updateComparison = async function() {
-    const leftId = currentSamples.left;
-    const rightId = currentSamples.right;
+    const leftSample = currentSamples.left;
+    const rightSample = currentSamples.right;
     const section = document.getElementById('comparison-section');
+    if (!leftSample.id || !rightSample.id) return;
     
     // Check if we are in single view mode (right column hidden)
     const colRight = document.getElementById('col-right');
@@ -966,26 +1158,22 @@ window.updateComparison = async function() {
         return;
     }
     
-    if (!leftId || !rightId) {
-        if(section) section.style.display = 'none';
-        return;
-    }
-
     try {
         const [leftRes, rightRes] = await Promise.all([
-            fetch(`/api/metrology_stats/${leftId}`),
-            fetch(`/api/metrology_stats/${rightId}`)
+            fetch(`/api/metrology_stats/${leftSample.id}?tag=${leftSample.tag || ''}`),
+            fetch(`/api/metrology_stats/${rightSample.id}?tag=${rightSample.tag || ''}`)
         ]);
 
         if (!leftRes.ok || !rightRes.ok) return;
 
         const leftStats = await leftRes.json();
         const rightStats = await rightRes.json();
-
+        const leftLabel = leftSample.tag ? `${leftSample.id}_${leftSample.tag}` : leftSample.id;
+        const rightLabel = rightSample.tag ? `${rightSample.id}_${rightSample.tag}` : rightSample.id;
         if(section) section.style.display = 'block';
         
-        document.getElementById('comp-left-header').innerText = leftId;
-        document.getElementById('comp-right-header').innerText = rightId;
+        document.getElementById('comp-left-header').innerText = leftLabel;
+        document.getElementById('comp-right-header').innerText = rightLabel;
 
         const tbody = document.querySelector('#comparison-table tbody');
         tbody.innerHTML = '';
@@ -1027,10 +1215,9 @@ window.updateComparison = async function() {
  * Export comparison table to CSV
  */
 window.exportComparisonCSV = function() {
-    const leftId = currentSamples.left;
-    const rightId = currentSamples.right;
-    
-    if (!leftId || !rightId) {
+    const leftSample = currentSamples.left;
+    const rightSample = currentSamples.right;
+    if (!leftSample.id || !rightSample.id) {
         alert("No comparison data available to export.");
         return;
     }
@@ -1038,7 +1225,7 @@ window.exportComparisonCSV = function() {
     const rows = [];
     
     // Headers
-    rows.push(['Metric', `Left Sample (${leftId})`, `Right Sample (${rightId})`, 'Difference']);
+    rows.push(['Metric', `Left Sample (${leftSample.id}_${leftSample.tag})`, `Right Sample (${rightSample.id}_${rightSample.tag})`, 'Difference']);
 
     // Data from table
     const tableBody = document.querySelector('#comparison-table tbody');
@@ -1066,7 +1253,7 @@ window.exportComparisonCSV = function() {
     const link = document.createElement("a");
     const url = URL.createObjectURL(blob);
     link.setAttribute("href", url);
-    link.setAttribute("download", `comparison_${leftId}_vs_${rightId}.csv`);
+    link.setAttribute("download", `comparison_${leftSample.id}_vs_${rightSample.id}.csv`);
     link.style.visibility = 'hidden';
     document.body.appendChild(link);
     link.click();
@@ -1217,5 +1404,415 @@ window.setSolderOpacity = function(viewerId, opacity) {
     }
 }
 
+/**
+ * Check and display processing status (Green Tick / Yellow Dot) for the selected Sample+Tag combination.
+ * This provides a visual cue "beside the button" before loading.
+ */
+window.checkRunStatus = async function(side) {
+    const select = document.getElementById(`${side}-sampleSelect`);
+    const modelSelect = document.getElementById(`${side}-modelSelect`);
+    if (!select) return;
+    
+    const sampleId = select.value;
+    const tag = modelSelect ? modelSelect.value : '';
+    
+    // Element to display the status icon
+    let statusContainer = document.getElementById(`${side}-run-status`);
+    
+    // If container doesn't exist, create it and append it after the inputs/button
+    if (!statusContainer && select.parentElement) {
+        statusContainer = document.createElement('span');
+        statusContainer.id = `${side}-run-status`;
+        statusContainer.className = "ms-2 fw-bold align-middle";
+        statusContainer.style.fontSize = "0.9rem";
+        
+        // Append to the parent container of the select/button group
+        // Try to append after the load button or select
+        const btn = document.querySelector(`button[onclick*="loadSample('${side}')"]`);
+        if (btn && btn.parentNode) {
+             btn.parentNode.appendChild(statusContainer);
+             // Restore button border radius if it was lost due to input-group behavior
+             // Since we added a span after the button, the button is no longer last.
+             btn.style.borderTopRightRadius = "var(--bs-border-radius, 0.375rem)";
+             btn.style.borderBottomRightRadius = "var(--bs-border-radius, 0.375rem)";
+        } else {
+             select.parentElement.appendChild(statusContainer);
+        }
+    }
+
+    if (!sampleId) {
+        if (statusContainer) statusContainer.innerHTML = '';
+        return;
+    }
+    
+    // Show loading spinner briefly
+    if (statusContainer) statusContainer.innerHTML = '<div class="spinner-border spinner-border-sm text-secondary" role="status"></div>';
+
+    try {
+        const response = await fetch(`/api/status/${sampleId}?tag=${tag || ''}`);
+        const status = await response.json();
+        
+        if (status.completed) {
+            statusContainer.innerHTML = '<span class="badge rounded-pill bg-success bg-opacity-10 text-success border border-success px-3" style="font-weight: 500; letter-spacing: 0.5px; font-size: 1rem;">Processed</span>';
+        } else {
+            statusContainer.innerHTML = '<span class="badge rounded-pill bg-warning bg-opacity-10 text-warning border border-warning px-3" style="font-weight: 500; letter-spacing: 0.5px; font-size: 1rem;">Not Processed</span>';
+        }
+    } catch (e) {
+        console.error("Status check failed", e);
+        if (statusContainer) statusContainer.innerHTML = '<span class="text-muted">?</span>';
+    }
+}
+
 // Expose to global scope for HTML onclick
 window.handleUpload = handleUpload;
+
+// Initialize listeners for dynamic status checking
+document.addEventListener('DOMContentLoaded', () => {
+    // Dynamically fetch and populate available models
+    fetch('/api/models')
+        .then(res => res.json())
+        .then(data => {
+            if (data.models && data.models.length > 0) {
+                ['left', 'right'].forEach(side => {
+                    const modelSelect = document.getElementById(`${side}-modelSelect`);
+                    if (modelSelect) {
+                        modelSelect.innerHTML = ''; // Clear default hardcoded options
+                        data.models.forEach(modelTag => {
+                            const option = document.createElement('option');
+                            option.value = modelTag;
+                            option.text = modelTag;
+                            modelSelect.appendChild(option);
+                        });
+                        window.checkRunStatus(side); // Re-check status for the new default selection
+                    }
+                });
+            }
+        })
+        .catch(e => console.error("Failed to fetch dynamic models:", e));
+
+    ['left', 'right'].forEach(side => {
+        const sampleSelect = document.getElementById(`${side}-sampleSelect`);
+        const modelSelect = document.getElementById(`${side}-modelSelect`);
+        
+        if (sampleSelect) {
+            // Clean up dropdown options to remove any server-rendered status icons (🟡, ✅)
+            Array.from(sampleSelect.options).forEach(opt => {
+                opt.text = opt.text.replace(/[\u2705\uD83D\uDFE1\uD83D\uDFE0\u26A0\uFE0F]/g, '').trim();
+            });
+
+            sampleSelect.addEventListener('change', () => window.checkRunStatus(side));
+            // Check on load if value exists
+            if (sampleSelect.value) window.checkRunStatus(side);
+        }
+        
+        if (modelSelect) {
+            modelSelect.addEventListener('change', () => window.checkRunStatus(side));
+        }
+    });
+});
+
+/**
+ * Open a new window to view all bumps in a single 3D scene (Grid View).
+ */
+window.viewAllBumps = function(sampleId, tag) {
+    // Open in new tab by excluding window features
+    const win = window.open('', '_blank');
+    if (!win) return alert("Please allow popups for this site");
+    
+    fetch(`/api/bumps/${sampleId}?tag=${tag || ''}`)
+        .then(res => res.json())
+        .then(bumps => {
+            
+            const allBumps = [...bumps.good, ...bumps.bad];
+            const badIds = new Set(bumps.bad.map(b => b.id));
+            
+            win.document.write(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>All Bumps - ${sampleId}</title>
+                    <style>body { margin: 0; overflow: hidden; background: #111; color: #fff; font-family: sans-serif; }</style>
+                    <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+                    <script type="importmap">
+                      {
+                        "imports": {
+                          "three": "https://unpkg.com/three@0.154.0/build/three.module.js",
+                          "three/addons/": "https://unpkg.com/three@0.154.0/examples/jsm/"
+                        }
+                      }
+                    </script>
+                </head>
+                <body>
+                    <div style="position: absolute; top: 10px; left: 10px; z-index: 100; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 4px;">
+                        <h3 style="margin: 0 0 5px;">${sampleId} Bump Grid</h3>
+                        <span style="color: #4ade80">● Good: ${bumps.good.length}</span> | 
+                        <span style="color: #ef4444">● Defective: ${bumps.bad.length}</span>
+                        <div class="small" style="margin-top: 5px; color: #aaa;">Left Click: Rotate | Right Click: Pan | Scroll: Zoom</div>
+                        <div style="margin-top: 10px;">
+                            <button id="toggleGoodBumpsBtn" style="padding: 4px 8px; font-size: 12px; cursor: pointer; margin-right: 5px;">Hide Good Bumps</button>
+                            <button id="toggleBadBumpsBtn" style="padding: 4px 8px; font-size: 12px; cursor: pointer;">Hide Defective Bumps</button>
+                        </div>
+                        <div style="margin-top: 10px; display: flex; align-items: center;">
+                            <label style="font-size: 12px; margin-right: 5px;">Solder Opacity:</label>
+                            <input type="range" id="solderOpacitySlider" min="0" max="1" step="0.1" value="1" style="vertical-align: middle;">
+                            <span id="solderOpacityVal" style="font-size: 12px; margin-left: 5px;">100%</span>
+                        </div>
+                        <datalist id="bumpList">
+                            ${allBumps.map(b => `<option value="${b.id}">`).join('')}
+                        </datalist>
+                        <div style="margin-top: 10px; display: flex; align-items: center;">
+                            <input type="text" id="searchBumpId" list="bumpList" placeholder="Search Bump ID..." style="font-size: 12px; padding: 4px; width: 120px; margin-right: 5px; background: #222; color: #fff; border: 1px solid #444; border-radius: 3px;">
+                            <button id="searchBtn" style="padding: 4px 8px; font-size: 12px; cursor: pointer; background: #3b82f6; color: white; border: none; border-radius: 3px;">Find</button>
+                        </div>
+                    </div>
+                    <script type="module">
+                        import * as THREE from 'three';
+                        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+                        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+                        import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+                        import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+
+                        const scene = new THREE.Scene();
+                        scene.background = new THREE.Color(0x111111);
+                        
+                        const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+                        camera.position.set(0, 40, 40);
+                        
+                        const renderer = new THREE.WebGLRenderer({ antialias: true });
+                        renderer.setSize(window.innerWidth, window.innerHeight);
+                        document.body.appendChild(renderer.domElement);
+                        
+                        const controls = new OrbitControls(camera, renderer.domElement);
+                        controls.enableDamping = true;
+                        
+                        const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+                        scene.add(ambientLight);
+                        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+                        dirLight.position.set(10, 20, 10);
+                        scene.add(dirLight);
+
+                        const loader = new GLTFLoader();
+                        const fontLoader = new FontLoader();
+                        
+                        const bumps = ${JSON.stringify(allBumps)};
+                        const badIds = new Set(${JSON.stringify([...badIds])});
+                        
+                        const goodBumpGroups = [];
+                        const badBumpGroups = [];
+
+                        const gridSize = Math.ceil(Math.sqrt(bumps.length));
+                        const spacing = 6.0; // Increased spacing
+                        
+                        // Load font for labels
+                        fontLoader.load('https://unpkg.com/three@0.154.0/examples/fonts/helvetiker_regular.typeface.json', (font) => {
+                            
+                            bumps.forEach((bump, index) => {
+                                const apiUrl = \`/api/bump_model/${sampleId}/\${bump.id}?tag=${tag || ''}\`;
+                                
+                                fetch(apiUrl)
+                                    .then(res => res.json())
+                                    .then(data => {
+                                        if (!data.url) return;
+                                        
+                                        const row = Math.floor(index / gridSize);
+                                        const col = index % gridSize;
+                                        
+                                        // Center the grid around (0,0)
+                                        const x = (col - (gridSize - 1) / 2) * spacing;
+                                        const z = (row - (gridSize - 1) / 2) * spacing;
+                                        
+                                        loader.load(data.url, (gltf) => {
+                                            const model = gltf.scene;
+                                            
+                                            // Calculate bounding box to normalize size and position
+                                            const box = new THREE.Box3().setFromObject(model);
+                                            const size = new THREE.Vector3();
+                                            box.getSize(size);
+                                            const center = new THREE.Vector3();
+                                            box.getCenter(center);
+                                            
+                                            // 1. Scale model to fit in a 4x4x4 box
+                                            const maxDim = Math.max(size.x, size.y, size.z) || 1;
+                                            const scaleFactor = 4.0 / maxDim;
+                                            model.scale.set(scaleFactor, scaleFactor, scaleFactor);
+                                            
+                                            // 2. Center model geometry at (0,0,0) locally
+                                            // We subtract the scaled center
+                                            model.position.copy(center).multiplyScalar(-scaleFactor);
+                                            
+                                            const group = new THREE.Group();
+                                            group.add(model);
+                                            
+                                            const isBad = badIds.has(bump.id);
+                                            group.userData = { id: bump.id, isBad: isBad };
+                                            group.position.set(x, 0, z);
+                                            
+                                            // Status Ring
+                                            const color = isBad ? 0xef4444 : 0x4ade80;
+                                            const ringGeo = new THREE.RingGeometry(2.2, 2.4, 32);
+                                            const ringMat = new THREE.MeshBasicMaterial({ color: color, side: THREE.DoubleSide });
+                                            const ring = new THREE.Mesh(ringGeo, ringMat);
+                                            ring.rotation.x = -Math.PI / 2;
+                                            group.add(ring);
+
+                                            // Text Label
+                                            const labelText = bump.label.replace('Bump ', ''); // Turns "Bump 12 (Void)" into "12 (Void)"
+                                            const textGeo = new TextGeometry(labelText, {
+                                                font: font,
+                                                size: 0.3,
+                                                height: 0.05,
+                                            });
+                                            textGeo.computeBoundingBox();
+                                            const textWidth = textGeo.boundingBox.max.x - textGeo.boundingBox.min.x;
+                                            const textMat = new THREE.MeshBasicMaterial({ color: isBad ? 0xffcccc : 0xffffff });
+                                            const textMesh = new THREE.Mesh(textGeo, textMat);
+                                            textMesh.position.set(-textWidth / 2, 2.5, 0); // Position above bump
+                                            
+                                            group.add(textMesh);
+                                            
+                                            if (isBad) {
+                                                badBumpGroups.push(group);
+                                            } else {
+                                                goodBumpGroups.push(group);
+                                            }
+                                            scene.add(group);
+                                        });
+                                    })
+                                    .catch(e => console.error("Error loading bump model:", e));
+                            });
+                        });
+
+                        let goodBumpsVisible = true;
+                        const toggleBtn = document.getElementById('toggleGoodBumpsBtn');
+
+                        if (toggleBtn) {
+                            toggleBtn.addEventListener('click', () => {
+                                goodBumpsVisible = !goodBumpsVisible;
+                                goodBumpGroups.forEach(group => {
+                                    group.visible = goodBumpsVisible;
+                                });
+                                toggleBtn.innerText = goodBumpsVisible ? 'Hide Good Bumps' : 'Show Good Bumps';
+                            });
+                        }
+
+                        let badBumpsVisible = true;
+                        const toggleBadBtn = document.getElementById('toggleBadBumpsBtn');
+
+                        if (toggleBadBtn) {
+                            toggleBadBtn.addEventListener('click', () => {
+                                badBumpsVisible = !badBumpsVisible;
+                                badBumpGroups.forEach(group => {
+                                    group.visible = badBumpsVisible;
+                                });
+                                toggleBadBtn.innerText = badBumpsVisible ? 'Hide Defective Bumps' : 'Show Defective Bumps';
+                            });
+                        }
+
+                        const opacitySlider = document.getElementById('solderOpacitySlider');
+                        const opacityVal = document.getElementById('solderOpacityVal');
+
+                        if (opacitySlider) {
+                            opacitySlider.addEventListener('input', (e) => {
+                                const opacity = parseFloat(e.target.value);
+                                if (opacityVal) opacityVal.innerText = Math.round(opacity * 100) + '%';
+                                
+                                scene.traverse((child) => {
+                                    if (child.isMesh && child.material) {
+                                        const mat = child.material;
+                                        // Check for greenish color (Solder)
+                                        if (mat.color && mat.color.g > 0.4 && mat.color.r < 0.2 && mat.color.b < 0.2) {
+                                            mat.opacity = opacity;
+                                            mat.transparent = opacity < 1.0;
+                                            mat.needsUpdate = true;
+                                        }
+                                    }
+                                });
+                            });
+                        }
+
+                        const searchInput = document.getElementById('searchBumpId');
+                        const searchBtn = document.getElementById('searchBtn');
+
+                        let isCameraAnimating = false;
+                        const targetCameraPos = new THREE.Vector3();
+                        const targetControlsPos = new THREE.Vector3();
+
+                        function focusOnBump(searchValue) {
+                            if (!searchValue) return;
+                            
+                            // Clean search value to handle inputs like "Bump 12" or just "12"
+                            const cleanId = searchValue.replace(/[^0-9]/g, '');
+                            const bumpId = cleanId || searchValue;
+
+                            let targetGroup = null;
+                            
+                            scene.traverse((child) => {
+                                if (child.isGroup && child.userData && String(child.userData.id) === String(bumpId)) {
+                                    targetGroup = child;
+                                }
+                            });
+                            
+                            if (targetGroup) {
+                                if (!targetGroup.visible) {
+                                    alert("This bump is currently hidden by filters.");
+                                    return;
+                                }
+
+                                const targetPos = targetGroup.position;
+                                
+                                // Set targets for smooth camera animation
+                                targetCameraPos.set(targetPos.x, targetPos.y + 15, targetPos.z + 15);
+                                targetControlsPos.copy(targetPos);
+                                isCameraAnimating = true;
+                                
+                                // Visual pop effect
+                                const origScale = targetGroup.scale.clone();
+                                targetGroup.scale.set(origScale.x * 1.5, origScale.y * 1.5, origScale.z * 1.5);
+                                setTimeout(() => {
+                                    if(targetGroup) targetGroup.scale.copy(origScale);
+                                }, 500);
+
+                            } else {
+                                alert("Bump ID not found.");
+                            }
+                        }
+
+                        if (searchBtn && searchInput) {
+                            searchBtn.addEventListener('click', () => focusOnBump(searchInput.value.trim()));
+                            searchInput.addEventListener('keydown', (e) => {
+                                if (e.key === 'Enter') focusOnBump(searchInput.value.trim());
+                            });
+                        }
+
+                        function animate() {
+                            requestAnimationFrame(animate);
+                            
+                            // Smooth camera fly-over animation
+                            if (isCameraAnimating) {
+                                camera.position.lerp(targetCameraPos, 0.06);
+                                controls.target.lerp(targetControlsPos, 0.06);
+                                if (camera.position.distanceTo(targetCameraPos) < 0.1) {
+                                    isCameraAnimating = false;
+                                }
+                            }
+                            
+                            controls.update();
+                            renderer.render(scene, camera);
+                        }
+                        
+                        window.addEventListener('resize', () => {
+                            camera.aspect = window.innerWidth / window.innerHeight;
+                            camera.updateProjectionMatrix();
+                            renderer.setSize(window.innerWidth, window.innerHeight);
+                        });
+
+                        animate();
+                    </script>
+                </body></html>`);
+            win.document.close();
+        })
+        .catch(e => {
+            if(win) win.close();
+            alert("Error viewing bumps: " + e.message);
+        });
+}
