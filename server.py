@@ -1,6 +1,8 @@
 import os
 import shutil
 from pathlib import Path
+import subprocess
+import sys
 
 # Set matplotlib backend to Agg (non-interactive) to prevent GUI errors in threads
 import matplotlib
@@ -31,14 +33,11 @@ try:
 except ImportError:
     pv = None
 
-# Import existing pipeline code
-import main
-from main import process_single_file, PipelineConfig
 from utils import PipelineLogbook
 
 # Configuration
 HOST = "0.0.0.0"
-PORT = int(os.environ.get("PORT", 8000))
+PORT = int(os.environ.get("PORT", 8001))
 BASE_DIR = Path(__file__).parent.absolute()
 UPLOAD_DIR = BASE_DIR / "uploads"
 OUTPUT_DIR = BASE_DIR / "output"
@@ -61,35 +60,48 @@ app.add_middleware(
 
 # --- Helper Functions ---
 
-def run_pipeline_task(file_path: Path, force: bool):
+def run_pipeline_task(file_path: Path, force: bool, tag: str | None):
     """Background task wrapper for the pipeline."""
-    # Configure pipeline for web usage (in-memory is faster)
     try:
-        config_class = main.CORE_FUNCTIONS["config_type"]
-        config = PipelineConfig(
-            output_base=str(OUTPUT_DIR),
-            verbose=True,
-            use_inmemory_detection=False,
-            clean_mask=True
-        )
-        #running the entry point function
-        pipeline_func = main.CORE_FUNCTIONS["entry_point"]
-        pipeline_func(file_path, config=config, force=force)
+        cmd = [
+            sys.executable,
+            str(BASE_DIR / "main.py"),
+            str(file_path),
+            "--output", str(OUTPUT_DIR),
+        ]
+        
+        if force:
+            cmd.append("--force")
+        
+        if tag:
+            cmd.extend(["--tag", tag])
 
+            # Dynamically resolve models based on the selected tag
+            # Convention: models/<tag>_detection_model.pt and models/<tag>_segmentation_model.ckpt
+            dynamic_det_model = BASE_DIR / "models" / f"{tag}_detection_model.pt"
+            dynamic_seg_model = BASE_DIR / "models" / f"{tag}_segmentation_model.ckpt"
+            
+            cmd.extend(["--detection-model", str(dynamic_det_model)])
+            cmd.extend(["--segmentation-model", str(dynamic_seg_model)])
+
+        subprocess.run(cmd, check=True)
+
+    except subprocess.CalledProcessError as e:
+        print(f"Pipeline failed for {file_path}: {e}")
     except Exception as e:
         print(f"Pipeline failed for {file_path}: {e}")
 
-def resolve_sample_id(sample_id: str) -> str:
-    """Resolve sample ID to the actual output folder name."""
-    if (OUTPUT_DIR / sample_id).exists():
-        return sample_id
-    
+def resolve_output_folder_name(sample_id: str, tag: str | None) -> str:
+    """Constructs the output folder name from a sample ID and an optional tag."""
     # Try extracting SN number (e.g. SN002_3D_Feb24 -> SN002)
     match = re.match(r"(SN\d+)", sample_id)
+    base_id = sample_id
     if match:
-        return match.group(1)
-            
-    return sample_id
+        base_id = match.group(1)
+    
+    # Construct folder name with tag
+    return f"{base_id}_{tag}" if tag else base_id
+
 
 def get_available_samples():
     """Get available samples from base directory."""
@@ -109,18 +121,26 @@ def get_available_samples():
                     sample_id = item.name
                     filename = nii_files[0].name
                     
-                    # Check status in OUTPUT_DIR using resolved ID
-                    resolved_id = resolve_sample_id(sample_id)
-                    output_path = OUTPUT_DIR / resolved_id
-                    is_complete = (output_path / "metrology" / "metrology.csv").exists()
                     
+
                     samples.append({
                         "name": sample_id,
                         "filename": filename,
-                        "completed": is_complete
                     })
             
     return sorted(samples, key=lambda x: x["name"])
+
+def get_available_models():
+    """Get available model tags from the models directory."""
+    tags = set()
+    models_dir = BASE_DIR / "models"
+    if models_dir.exists():
+        for item in models_dir.iterdir():
+            if item.is_file():
+                match = re.match(r"(.+)_(?:detection_model\.pt|segmentation_model\.ckpt)$", item.name)
+                if match:
+                    tags.add(match.group(1))
+    return sorted(list(tags))
 
 # --- API Endpoints ---
 
@@ -148,7 +168,7 @@ async def upload_file(file: UploadFile = File(...)):
     return {"filename": file.filename, "sample_id": file_stem, "path": str(file_path)}
 
 @app.post("/api/process/{sample_id}/{filename}")
-async def process_scan(sample_id: str, filename: str, background_tasks: BackgroundTasks, force: bool = False):
+async def process_scan(sample_id: str, filename: str, background_tasks: BackgroundTasks, force: bool = False, tag: str | None = None):
     """Trigger processing for an uploaded file."""
     file_path = UPLOAD_DIR / sample_id / filename
     
@@ -161,13 +181,13 @@ async def process_scan(sample_id: str, filename: str, background_tasks: Backgrou
     
     # Check logbook
     logbook = PipelineLogbook(OUTPUT_DIR)
-    should_run, reason = logbook.should_process(file_path, force=force)
+    should_run, reason = logbook.should_process(file_path, force=force, tag=tag or "")
     
     if not should_run:
         return {"status": "skipped", "reason": reason, "job_id": str(file_path)}
 
     # Run pipeline in background (non-blocking)
-    background_tasks.add_task(run_pipeline_task, file_path, force)
+    background_tasks.add_task(run_pipeline_task, file_path, force, tag)
     
     return {"status": "started", "job_id": str(file_path)}
 
@@ -177,11 +197,15 @@ def list_jobs():
     logbook = PipelineLogbook(OUTPUT_DIR)
     return logbook.list_jobs()
 
+@app.get("/api/models")
+def list_models():
+    return {"models": get_available_models()}
+
 @app.get("/api/status/{sample_id}")
-def get_sample_status(sample_id: str):
+def get_sample_status(sample_id: str, tag: str | None = None):
     """Check the processing status of a sample by inspecting output files."""
-    resolved_id = resolve_sample_id(sample_id)
-    sample_dir = OUTPUT_DIR / resolved_id
+    folder_name = resolve_output_folder_name(sample_id, tag)
+    sample_dir = OUTPUT_DIR / folder_name
     
     status = {
         "conversion": "pending",
@@ -190,7 +214,7 @@ def get_sample_status(sample_id: str):
         "metrology": "pending",
         "completed": False,
         "data": {},
-        "output_id": resolved_id
+        "output_id": folder_name
     }
     
     if not sample_dir.exists():
@@ -204,7 +228,7 @@ def get_sample_status(sample_id: str):
         # Get a preview image
         images = list(view1_dir.glob("*.jpg"))
         if images:
-            status["data"]["preview_image"] = f"/output/{resolved_id}/view1/input_images/{images[len(images)//2].name}"
+            status["data"]["preview_image"] = f"/output/{folder_name}/view1/input_images/{images[len(images)//2].name}"
 
     # 2. Check Detection (bb3d.npy is generated after detection and merging)
     if (sample_dir / "bb3d.npy").exists():
@@ -220,7 +244,7 @@ def get_sample_status(sample_id: str):
         status["segmentation"] = "completed"
         status["metrology"] = "running"
         if (sample_dir / "segmentation.nii.gz").exists():
-             status["data"]["segmentation_file"] = f"/output/{resolved_id}/segmentation.nii.gz"
+             status["data"]["segmentation_file"] = f"/output/{folder_name}/segmentation.nii.gz"
 
     # 4. Check if Metrology is finished (metrology.csv exists)
     if (metrology_dir / "metrology.csv").exists():
@@ -262,11 +286,12 @@ def get_sample_status(sample_id: str):
     return status
 
 @app.get("/api/model/{sample_id}")
-def get_3d_model(sample_id: str):
+def get_3d_model(sample_id: str, tag: str | None = None):
     """Generate and return GLTF model for 3D visualization."""
+    folder_name = resolve_output_folder_name(sample_id, tag)
     try:
-        generate_gltf_for_sample(sample_id, OUTPUT_DIR)
-        return {"url": f"/output/{sample_id}/model.gltf"}
+        generate_gltf_for_sample(folder_name, OUTPUT_DIR)
+        return {"url": f"/output/{folder_name}/model.gltf"}
     except (EOFError, OSError):
         raise HTTPException(status_code=503, detail="Model file is being written")
     except FileNotFoundError:
@@ -275,9 +300,10 @@ def get_3d_model(sample_id: str):
         raise HTTPException(status_code=500, detail=f"Model generation failed: {str(e)}")
 
 @app.get("/api/bumps/{sample_id}")
-def get_bumps(sample_id: str):
+def get_bumps(sample_id: str, tag: str | None = None):
     """Get lists of good and bad bumps based on metrology results."""
-    csv_path = OUTPUT_DIR / sample_id / "metrology" / "metrology.csv"
+    folder_name = resolve_output_folder_name(sample_id, tag)
+    csv_path = OUTPUT_DIR / folder_name / "metrology" / "metrology.csv"
     if not csv_path.exists():
         return {"good": [], "bad": []}
     
@@ -291,14 +317,14 @@ def get_bumps(sample_id: str):
             time.sleep(0.2)
             
     if df is None:
-        print(f"Failed to read metrology CSV for {sample_id}")
+        print(f"Failed to read metrology CSV for {folder_name}")
         return {"good": [], "bad": []}
 
     good = []
     bad = []
     
     # Load affine for coordinate mapping
-    nifti_path = OUTPUT_DIR / sample_id / "segmentation.nii.gz"
+    nifti_path = OUTPUT_DIR / folder_name / "segmentation.nii.gz"
     affine = None
     
     if nifti_path.exists():
@@ -353,10 +379,11 @@ def get_bumps(sample_id: str):
     return {"good": good, "bad": bad}
 
 @app.get("/api/bump_model/{sample_id}/{bump_id}")
-def get_bump_model(sample_id: str, bump_id: str):
+def get_bump_model(sample_id: str, bump_id: str, tag: str | None = None):
     """Generate and return GLTF model for a specific bump."""
+    folder_name = resolve_output_folder_name(sample_id, tag)
     try:
-        url = generate_bump_gltf(sample_id, bump_id, OUTPUT_DIR)
+        url = generate_bump_gltf(folder_name, bump_id, OUTPUT_DIR)
         return {"url": url}
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Bump segmentation not found")
@@ -368,9 +395,10 @@ def get_bump_model(sample_id: str, bump_id: str):
         raise HTTPException(status_code=500, detail=f"Bump model generation failed: {str(e)}")
 
 @app.get("/api/detection_preview/{sample_id}")
-def get_detection_preview(sample_id: str):
+def get_detection_preview(sample_id: str, tag: str | None = None):
     """Get detection preview data (images + bboxes) for frontend visualization."""
-    sample_dir = OUTPUT_DIR / sample_id
+    folder_name = resolve_output_folder_name(sample_id, tag)
+    sample_dir = OUTPUT_DIR / folder_name
     result = {}
     
     # View 1 (Horizontal) uses Class 0, View 2 (Vertical) uses Class 1
@@ -379,9 +407,9 @@ def get_detection_preview(sample_id: str):
         det_dir = sample_dir / view_name / "detections"
         
         if not img_dir.exists() or not det_dir.exists():
-            print(f"DEBUG: Missing directories for {view_name}. Img: {img_dir.exists()}, Det: {det_dir.exists()}")
+            print(f"DEBUG: Missing directories for {folder_name}/{view_name}. Img: {img_dir.exists()}, Det: {det_dir.exists()}")
             if sample_dir.exists():
-                print(f"DEBUG: Contents of {sample_dir}: {[x.name for x in sample_dir.iterdir()]}")
+                print(f"DEBUG: Contents of {sample_dir}: {[x.name for x in sample_dir.iterdir() if x.is_dir()]}")
             continue
             
         images = sorted(list(img_dir.glob("*.jpg")))
@@ -422,7 +450,7 @@ def get_detection_preview(sample_id: str):
                     print(f"Error loading bboxes for {txt_path}: {e}")
 
             view_frames.append({
-                "image_url": f"/output/{sample_id}/{view_name}/input_images/{img_path.name}",
+                "image_url": f"/output/{folder_name}/{view_name}/input_images/{img_path.name}",
                 "bboxes": bboxes
             })
 
@@ -431,9 +459,10 @@ def get_detection_preview(sample_id: str):
     return result
 
 @app.get("/api/metrology_stats/{sample_id}")
-def get_metrology_stats(sample_id: str):
+def get_metrology_stats(sample_id: str, tag: str | None = None):
     """Get statistical data for charts."""
-    csv_path = OUTPUT_DIR / sample_id / "metrology" / "metrology.csv"
+    folder_name = resolve_output_folder_name(sample_id, tag)
+    csv_path = OUTPUT_DIR / folder_name / "metrology" / "metrology.csv"
     if not csv_path.exists():
         raise HTTPException(status_code=404, detail="Metrology data not found")
     
@@ -497,14 +526,15 @@ def get_metrology_stats(sample_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/report/{sample_id}")
-def get_report(sample_id: str):
+def get_report(sample_id: str, tag: str | None = None):
     """Download the generated PDF report."""
-    report_path = OUTPUT_DIR / sample_id / "metrology" / "metrology_report.pdf"
+    folder_name = resolve_output_folder_name(sample_id, tag)
+    report_path = OUTPUT_DIR / folder_name / "metrology" / "metrology_report.pdf"
     
     if not report_path.exists():
         raise HTTPException(status_code=404, detail="Report not found")
         
-    return FileResponse(report_path, media_type="application/pdf", filename=f"{sample_id}_report.pdf")
+    return FileResponse(report_path, media_type="application/pdf", filename=f"{folder_name}_report.pdf")
 
 # --- Static File Serving ---
 
