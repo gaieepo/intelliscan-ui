@@ -348,9 +348,21 @@ def get_bumps(sample_id: str, tag: str | None = None):
         if row.get('pad_misalignment_defect'): defects.append("Misalignment")
         if row.get('pillar_aspect_ratio_defect'): defects.append("Aspect Ratio")
         
+        def get_val(col):
+            val = row.get(col)
+            return float(val) if pd.notna(val) else 0.0
+
         item = {
             "id": bump_id,
-            "label": f"Bump {bump_id}" + (f" ({', '.join(defects)})" if defects else "")
+            "label": f"Bump {bump_id}" + (f" ({', '.join(defects)})" if defects else ""),
+            "defects": defects,
+            "metrics": {
+                "BLT": get_val('BLT'),
+                "Void Ratio": get_val('Void_to_solder_ratio'),
+                "Pad Misalignment": get_val('Pad_misalignment'),
+                "Pillar Width": get_val('pillar_width'),
+                "Pillar Height": get_val('pillar_height')
+            }
         }
         
         # Calculate position from bounding box
