@@ -1,4 +1,6 @@
 /**
+ * Created on Wed 04 Feb 2026 03∶18∶10 PM
+ * Author: Shubham Jariwala
  * 3D-IntelliScan Frontend Logic
  * Handles file uploads, processing triggers, and status polling.
  */
@@ -1025,6 +1027,7 @@ window.renderMetrologyCharts = function(sampleId, container, side, tag) {
             </div>
             <div class="col-md-6">
                 <div class="p-2 border rounded bg-dark" style="height: 300px; position: relative;">
+                    <span id="total-bumps-${side}" style="position: absolute; top: 15px; left: 20px; color: #cbd5e1; font-size: 13px; font-weight: bold; z-index: 10;">Total Bumps: ...</span>
                     <canvas id="chart-defects-${side}"></canvas>
                 </div>
             </div>
@@ -1049,6 +1052,11 @@ window.renderMetrologyCharts = function(sampleId, container, side, tag) {
     fetch(`/api/metrology_stats/${sampleId}?tag=${tag || ''}`)
         .then(res => res.json())
         .then(data => {
+            const totalBadge = document.getElementById(`total-bumps-${side}`);
+            if (totalBadge && data.summary) {
+                totalBadge.innerText = `Total Bumps: ${data.summary.total_bumps}`;
+            }
+
             // Pie Chart
             new Chart(document.getElementById(`chart-pie-${side}`), {
                 type: 'doughnut',
