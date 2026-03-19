@@ -350,6 +350,8 @@ function updatePhaseUI(side, phase, status, data, sampleId, duration, tag) {
                         const hasView1 = detData.view1 && detData.view1.length > 0;
                         const hasView2 = detData.view2 && detData.view2.length > 0;
                         
+                        let bestIndex1 = 0;
+                        let bestIndex2 = 0;
                         let html = '<div class="row g-2">';
 
                         if (hasView1) {
@@ -357,6 +359,9 @@ function updatePhaseUI(side, phase, status, data, sampleId, duration, tag) {
                             const maxSlice = frames.length - 1;
                             const baseId = `view1-${uniqueId}`; // ID specific to view1
                             
+                            let maxBoxes = -1;
+                            frames.forEach((f, i) => { if(f.bboxes && f.bboxes.length > maxBoxes) { maxBoxes = f.bboxes.length; bestIndex1 = i; } });
+
                             html += `
                             <div class="${hasView2 ? 'col-md-6' : 'col-12'}">
                                 <div class="d-flex justify-content-between align-items-center mb-1">
@@ -365,13 +370,13 @@ function updatePhaseUI(side, phase, status, data, sampleId, duration, tag) {
                                         <input class="form-check-input" type="checkbox" id="bbox-toggle-${baseId}" checked onchange="window.toggleBBoxes('${side}', '${sampleId}', this)">
                                         <label class="form-check-label small text-muted" for="bbox-toggle-${baseId}">Boxes</label>
                                     </div>
-                                    <span class="badge bg-secondary" id="counter-${baseId}">1/${frames.length}</span>
+                                    <span class="badge bg-secondary" id="counter-${baseId}">${bestIndex1 + 1}/${frames.length}</span>
                                 </div>
                                 <div class="detection-preview position-relative">
                                     <img id="img-${baseId}" class="img-fluid rounded border w-100" style="min-height: 200px; background: #000; object-fit: contain;">
                                     <canvas id="canvas-${baseId}" class="position-absolute top-0 start-0 w-100 h-100" style="pointer-events: auto;"></canvas>
                                 </div>
-                                <input type="range" class="form-range mt-2" min="0" max="${maxSlice}" value="0" oninput="window.updateDetectionFrame('${side}', '${sampleId}', this.value, 'view1')">
+                                <input type="range" class="form-range mt-2" min="0" max="${maxSlice}" value="${bestIndex1}" oninput="window.updateDetectionFrame('${side}', '${sampleId}', this.value, 'view1')">
                             </div>`;
                         }
 
@@ -380,6 +385,9 @@ function updatePhaseUI(side, phase, status, data, sampleId, duration, tag) {
                             const maxSlice = frames.length - 1;
                             const baseId = `view2-${uniqueId}`; // ID specific to view2
                             
+                            let maxBoxes = -1;
+                            frames.forEach((f, i) => { if(f.bboxes && f.bboxes.length > maxBoxes) { maxBoxes = f.bboxes.length; bestIndex2 = i; } });
+
                             html += `
                             <div class="${hasView1 ? 'col-md-6' : 'col-12'}">
                                 <div class="d-flex justify-content-between align-items-center mb-1">
@@ -388,13 +396,13 @@ function updatePhaseUI(side, phase, status, data, sampleId, duration, tag) {
                                         <input class="form-check-input" type="checkbox" id="bbox-toggle-${baseId}" checked onchange="window.toggleBBoxes('${side}', '${sampleId}', this)">
                                         <label class="form-check-label small text-muted" for="bbox-toggle-${baseId}">Boxes</label>
                                     </div>
-                                    <span class="badge bg-secondary" id="counter-${baseId}">1/${frames.length}</span>
+                                    <span class="badge bg-secondary" id="counter-${baseId}">${bestIndex2 + 1}/${frames.length}</span>
                                 </div>
                                 <div class="detection-preview position-relative">
                                     <img id="img-${baseId}" class="img-fluid rounded border w-100" style="min-height: 200px; background: #000; object-fit: contain;">
                                     <canvas id="canvas-${baseId}" class="position-absolute top-0 start-0 w-100 h-100" style="pointer-events: auto;"></canvas>
                                 </div>
-                                <input type="range" class="form-range mt-2" min="0" max="${maxSlice}" value="0" oninput="window.updateDetectionFrame('${side}', '${sampleId}', this.value, 'view2')">
+                                <input type="range" class="form-range mt-2" min="0" max="${maxSlice}" value="${bestIndex2}" oninput="window.updateDetectionFrame('${side}', '${sampleId}', this.value, 'view2')">
                             </div>`;
                         }
                         
@@ -403,8 +411,8 @@ function updatePhaseUI(side, phase, status, data, sampleId, duration, tag) {
 
                         // Initialize frames
                         setTimeout(() => {
-                            if (hasView1) window.updateDetectionFrame(side, sampleId, 0, 'view1');
-                            if (hasView2) window.updateDetectionFrame(side, sampleId, 0, 'view2');
+                            if (hasView1) window.updateDetectionFrame(side, sampleId, bestIndex1, 'view1');
+                            if (hasView2) window.updateDetectionFrame(side, sampleId, bestIndex2, 'view2');
                         }, 100);
                     })
                     .catch(e => console.error("Error loading detection preview:", e));
@@ -1131,7 +1139,7 @@ window.renderMetrologyCharts = function(sampleId, container, side, tag) {
                     options: {
                         maintainAspectRatio: false,
                         plugins: { 
-                            title: { display: true, text: 'Void Ratio Distribution', color: 'white' }, 
+                            title: { display: true, text: 'Void to Solder Ratio Distribution', color: 'white' }, 
                             legend: { display: false },
                             datalabels: { display: false }
                         },
@@ -1564,6 +1572,13 @@ window.viewAllBumps = function(sampleId, tag) {
                             <input type="text" id="searchBumpId" list="bumpList" placeholder="Search Bump ID..." style="font-size: 12px; padding: 4px; width: 120px; margin-right: 5px; background: #222; color: #fff; border: 1px solid #444; border-radius: 3px;">
                             <button id="searchBtn" style="padding: 4px 8px; font-size: 12px; cursor: pointer; background: #3b82f6; color: white; border: none; border-radius: 3px;">Find</button>
                         </div>
+                        <div id="bumpDetailsPanel" style="margin-top: 15px; padding: 12px; background: rgba(30, 41, 59, 0.9); border-radius: 6px; display: none; font-size: 13px; border: 1px solid #475569; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+                            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #475569; padding-bottom: 6px; margin-bottom: 8px;">
+                                <h4 id="bumpDetailsTitle" style="margin: 0; color: #38bdf8; font-size: 15px;">Bump Details</h4>
+                                <span id="closeDetailsBtn" style="cursor: pointer; color: #94a3b8; font-weight: bold; font-size: 14px; padding: 0 4px;">✕</span>
+                            </div>
+                            <div id="bumpDetailsContent" style="min-width: 180px;"></div>
+                        </div>
                     </div>
                     <script type="module">
                         import * as THREE from 'three';
@@ -1765,6 +1780,8 @@ window.viewAllBumps = function(sampleId, tag) {
                                 targetControlsPos.copy(targetPos);
                                 isCameraAnimating = true;
                                 
+                                showBumpDetails(bumpId);
+                                
                                 // Visual pop effect
                                 const origScale = targetGroup.scale.clone();
                                 targetGroup.scale.set(origScale.x * 1.5, origScale.y * 1.5, origScale.z * 1.5);
@@ -1783,6 +1800,77 @@ window.viewAllBumps = function(sampleId, tag) {
                                 if (e.key === 'Enter') focusOnBump(searchInput.value.trim());
                             });
                         }
+
+                        const raycaster = new THREE.Raycaster();
+                        const mouse = new THREE.Vector2();
+                        
+                        const detailsPanel = document.getElementById('bumpDetailsPanel');
+                        const detailsTitle = document.getElementById('bumpDetailsTitle');
+                        const detailsContent = document.getElementById('bumpDetailsContent');
+                        const closeBtn = document.getElementById('closeDetailsBtn');
+                        
+                        if (closeBtn) {
+                            closeBtn.addEventListener('click', () => {
+                                detailsPanel.style.display = 'none';
+                            });
+                        }
+                        
+                        function showBumpDetails(bumpId) {
+                            const bump = bumps.find(b => String(b.id) === String(bumpId));
+                            if (!bump) return;
+                            
+                            const isBad = badIds.has(bump.id);
+                            detailsTitle.innerText = bump.label;
+                            detailsTitle.style.color = isBad ? '#ef4444' : '#4ade80';
+                            
+                            let html = '<table style="width: 100%; border-collapse: collapse;">';
+                            if (bump.metrics) {
+                                const m = bump.metrics;
+                                html += '<tr><td style="padding: 3px 0; color: #cbd5e1;">BLT:</td><td style="text-align: right; font-weight: bold;">' + m['BLT'].toFixed(2) + ' µm</td></tr>';
+                                html += '<tr><td style="padding: 3px 0; color: #cbd5e1;">Void to Solder Ratio:</td><td style="text-align: right; font-weight: bold;">' + (m['Void Ratio'] * 100).toFixed(2) + ' %</td></tr>';
+                                html += '<tr><td style="padding: 3px 0; color: #cbd5e1;">Pad Misalign:</td><td style="text-align: right; font-weight: bold;">' + m['Pad Misalignment'].toFixed(2) + ' µm</td></tr>';
+                                html += '<tr><td style="padding: 3px 0; color: #cbd5e1;">Pillar Width:</td><td style="text-align: right; font-weight: bold;">' + m['Pillar Width'].toFixed(2) + ' µm</td></tr>';
+                                html += '<tr><td style="padding: 3px 0; color: #cbd5e1;">Pillar Height:</td><td style="text-align: right; font-weight: bold;">' + m['Pillar Height'].toFixed(2) + ' µm</td></tr>';
+                            } else {
+                                html += '<tr><td style="color: #94a3b8; padding: 4px 0;">No metrology data available</td></tr>';
+                            }
+                            
+                            if (bump.defects && bump.defects.length > 0) {
+                                html += '<tr><td colspan="2" style="padding-top: 8px; color: #ef4444; font-weight: bold; font-size: 11px;">Defects: ' + bump.defects.join(', ') + '</td></tr>';
+                            }
+                            
+                            html += '</table>';
+                            detailsContent.innerHTML = html;
+                            detailsPanel.style.display = 'block';
+                        }
+
+                        window.addEventListener('click', (event) => {
+                            if (event.target.tagName !== 'CANVAS') return;
+                            
+                            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+                            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                            
+                            raycaster.setFromCamera(mouse, camera);
+                            
+                            const activeGroups = [];
+                            goodBumpGroups.forEach(g => { if (g.visible) activeGroups.push(g); });
+                            badBumpGroups.forEach(g => { if (g.visible) activeGroups.push(g); });
+                            
+                            const intersects = raycaster.intersectObjects(activeGroups, true);
+                            
+                            if (intersects.length > 0) {
+                                let object = intersects[0].object;
+                                while (object && (!object.userData || object.userData.id === undefined)) {
+                                    object = object.parent;
+                                }
+                                
+                                if (object && object.userData && object.userData.id !== undefined) {
+                                    const bumpId = object.userData.id;
+                                    showBumpDetails(bumpId);
+                                    focusOnBump(bumpId);
+                                }
+                            }
+                        });
 
                         function animate() {
                             requestAnimationFrame(animate);
