@@ -1,3 +1,20 @@
+"""
+Created on Wed 04 Feb 2026 10:30:09 AM
+Author: Shubham Jariwala
+
+3D-IntelliScan Backend Server
+
+This module runs a FastAPI server that acts as the primary interface between 
+the frontend dashboard and the backend 3D processing pipeline.
+
+Key Responsibilities:
+- Handling NIfTI file uploads.
+- Triggering asynchronous analysis jobs (detection, segmentation, metrology) via main.py.
+- Serving status updates, metrology statistics, and bump-level defect data to the UI.
+- Dynamically generating and serving 3D GLTF models for browser visualization.
+- Serving the frontend static files, templates, and generated PDF reports.
+"""
+
 import os
 import shutil
 from pathlib import Path
@@ -518,10 +535,13 @@ def get_metrology_stats(sample_id: str, tag: str | None = None):
         if "Void_to_solder_ratio" in df.columns:
             data = df["Void_to_solder_ratio"].dropna().values
             if len(data) > 0:
-                hist, bin_edges = np.histogram(data, bins=10)
+                # Fixed bins: 2% steps up to 16%, then a catch-all for 16%+
+                # Using -inf and inf ensures no outlier data is ever dropped from the chart
+                fixed_bins = [-float('inf'), 0.02, 0.04, 0.06, 0.08, 0.10, 0.12, 0.14, 0.16, float('inf')]
+                hist, _ = np.histogram(data, bins=fixed_bins)
                 stats["void_hist"] = {
                     "counts": hist.tolist(),
-                    "labels": [f"{bin_edges[i]:.2f}-{bin_edges[i+1]:.2f}" for i in range(len(hist))]
+                    "labels": ["0-2%", "2-4%", "4-6%", "6-8%", "8-10%", "10-12%", "12-14%", "14-16%", "16%+"]
                 }
         
         # 5. Summary Metrics for Comparison
