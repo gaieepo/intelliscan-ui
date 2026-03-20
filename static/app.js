@@ -1565,13 +1565,21 @@ window.viewAllBumps = function(sampleId, tag) {
                         <span style="color: #ef4444">● Defective: ${bumps.bad.length}</span>
                         <div class="small" style="margin-top: 5px; color: #aaa;">Left Click: Rotate | Right Click: Pan | Scroll: Zoom</div>
                         <div style="margin-top: 10px;">
+                            <button id="toggleColorsBtn" style="padding: 4px 8px; font-size: 12px; cursor: pointer; margin-right: 5px; background: #3b82f6; color: white; border: none; border-radius: 3px;">View: Analyzed</button>
                             <button id="toggleGoodBumpsBtn" style="padding: 4px 8px; font-size: 12px; cursor: pointer; margin-right: 5px;">Hide Good Bumps</button>
                             <button id="toggleBadBumpsBtn" style="padding: 4px 8px; font-size: 12px; cursor: pointer;">Hide Defective Bumps</button>
+                            <button id="exportImageBtn" style="padding: 4px 8px; font-size: 12px; cursor: pointer; margin-left: 5px; background: #10b981; color: white; border: none; border-radius: 3px;">Export Image</button>
                         </div>
                         <div style="margin-top: 10px; display: flex; align-items: center;">
                             <label style="font-size: 12px; margin-right: 5px;">Solder Opacity:</label>
                             <input type="range" id="solderOpacitySlider" min="0" max="1" step="0.1" value="1" style="vertical-align: middle;">
                             <span id="solderOpacityVal" style="font-size: 12px; margin-left: 5px;">100%</span>
+                        </div>
+                        <div style="margin-top: 10px; display: flex; gap: 5px; flex-wrap: wrap;" id="layerControls">
+                            <span class="legend-badge" data-color="red" style="padding: 4px 8px; border-radius: 12px; font-size: 11px; background-color: red; color: white; cursor: pointer; user-select: none; transition: all 0.2s;">Copper Pillar</span>
+                            <span class="legend-badge" data-color="green" style="padding: 4px 8px; border-radius: 12px; font-size: 11px; background-color: green; color: white; cursor: pointer; user-select: none; transition: all 0.2s;">Solder</span>
+                            <span class="legend-badge" data-color="blue" style="padding: 4px 8px; border-radius: 12px; font-size: 11px; background-color: blue; color: white; cursor: pointer; user-select: none; transition: all 0.2s;">Void</span>
+                            <span class="legend-badge" data-color="yellow" style="padding: 4px 8px; border-radius: 12px; font-size: 11px; background-color: yellow; color: black; cursor: pointer; user-select: none; transition: all 0.2s;">Copper Pad</span>
                         </div>
                         <datalist id="bumpList">
                             ${allBumps.map(b => `<option value="${b.id}">`).join('')}
@@ -1601,7 +1609,7 @@ window.viewAllBumps = function(sampleId, tag) {
                         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
                         camera.position.set(0, 40, 40);
                         
-                        const renderer = new THREE.WebGLRenderer({ antialias: true });
+                        const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
                         renderer.setSize(window.innerWidth, window.innerHeight);
                         document.body.appendChild(renderer.domElement);
                         
@@ -1622,6 +1630,8 @@ window.viewAllBumps = function(sampleId, tag) {
                         
                         const goodBumpGroups = [];
                         const badBumpGroups = [];
+
+                        let isColorCoded = false;
 
                         const gridSize = Math.ceil(Math.sqrt(bumps.length));
                         const spacing = 6.0; // Increased spacing
@@ -1670,12 +1680,25 @@ window.viewAllBumps = function(sampleId, tag) {
                                             group.userData = { id: bump.id, isBad: isBad };
                                             group.position.set(x, 0, z);
                                             
+                                            // Cache original colors and apply initial state
+                                            model.traverse((child) => {
+                                                if (child.isMesh && child.material) {
+                                                    child.material = child.material.clone();
+                                                    if (child.material.color) {
+                                                        child.userData.originalColor = child.material.color.clone();
+                                                        if (!isColorCoded) child.material.color.setHex(0x888888);
+                                                    }
+                                                }
+                                            });
+
                                             // Status Ring
                                             const color = isBad ? 0xef4444 : 0x4ade80;
                                             const ringGeo = new THREE.RingGeometry(2.2, 2.4, 32);
                                             const ringMat = new THREE.MeshBasicMaterial({ color: color, side: THREE.DoubleSide });
                                             const ring = new THREE.Mesh(ringGeo, ringMat);
                                             ring.rotation.x = -Math.PI / 2;
+                                            ring.name = 'statusRing';
+                                            ring.visible = isColorCoded;
                                             group.add(ring);
 
                                             // Text Label
@@ -1690,6 +1713,8 @@ window.viewAllBumps = function(sampleId, tag) {
                                             const textMat = new THREE.MeshBasicMaterial({ color: isBad ? 0xffcccc : 0xffffff });
                                             const textMesh = new THREE.Mesh(textGeo, textMat);
                                             textMesh.position.set(-textWidth / 2, 2.5, 0); // Position above bump
+                                            textMesh.name = 'statusText';
+                                            textMesh.visible = isColorCoded;
                                             
                                             group.add(textMesh);
                                             
@@ -1704,6 +1729,35 @@ window.viewAllBumps = function(sampleId, tag) {
                                     .catch(e => console.error("Error loading bump model:", e));
                             });
                         });
+
+                        const toggleColorsBtn = document.getElementById('toggleColorsBtn');
+
+                        if (toggleColorsBtn) {
+                            toggleColorsBtn.addEventListener('click', () => {
+                                isColorCoded = !isColorCoded;
+                                toggleColorsBtn.innerText = isColorCoded ? 'View: Raw' : 'View: Analyzed';
+                                toggleColorsBtn.style.background = isColorCoded ? '#64748b' : '#3b82f6';
+                                
+                                const updateGroup = (group) => {
+                                    const ring = group.getObjectByName('statusRing');
+                                    const textMesh = group.getObjectByName('statusText');
+                                    if (ring) ring.visible = isColorCoded;
+                                    if (textMesh) textMesh.visible = isColorCoded;
+                                    
+                                    group.traverse((child) => {
+                                        if (child.isMesh && child.name !== 'statusRing' && child.name !== 'statusText' && child.material && child.material.color) {
+                                            if (isColorCoded && child.userData.originalColor) {
+                                                child.material.color.copy(child.userData.originalColor);
+                                            } else if (!isColorCoded) {
+                                                child.material.color.setHex(0x888888);
+                                            }
+                                        }
+                                    });
+                                };
+                                goodBumpGroups.forEach(updateGroup);
+                                badBumpGroups.forEach(updateGroup);
+                            });
+                        }
 
                         let goodBumpsVisible = true;
                         const toggleBtn = document.getElementById('toggleGoodBumpsBtn');
@@ -1734,24 +1788,62 @@ window.viewAllBumps = function(sampleId, tag) {
                         const opacitySlider = document.getElementById('solderOpacitySlider');
                         const opacityVal = document.getElementById('solderOpacityVal');
 
-                        if (opacitySlider) {
-                            opacitySlider.addEventListener('input', (e) => {
-                                const opacity = parseFloat(e.target.value);
-                                if (opacityVal) opacityVal.innerText = Math.round(opacity * 100) + '%';
-                                
-                                scene.traverse((child) => {
-                                    if (child.isMesh && child.material) {
-                                        const mat = child.material;
-                                        // Check for greenish color (Solder)
-                                        if (mat.color && mat.color.g > 0.4 && mat.color.r < 0.2 && mat.color.b < 0.2) {
-                                            mat.opacity = opacity;
-                                            mat.transparent = opacity < 1.0;
-                                            mat.needsUpdate = true;
+                        const hiddenLayers = new Set();
+                        
+                        function updateMaterialVisibility() {
+                            const solderOpacity = opacitySlider ? parseFloat(opacitySlider.value) : 1.0;
+                            
+                            scene.traverse((child) => {
+                                if (child.isMesh && child.material && child.userData && child.userData.originalColor) {
+                                    const orig = child.userData.originalColor;
+                                    let type = null;
+                                    
+                                    // Detect layer type from original RGB values
+                                    if (orig.r > 0.8 && orig.g < 0.2 && orig.b < 0.2) type = 'red';
+                                    else if (orig.g > 0.4 && orig.r < 0.2 && orig.b < 0.2) type = 'green';
+                                    else if (orig.b > 0.8 && orig.r < 0.2 && orig.g < 0.2) type = 'blue';
+                                    else if (orig.r > 0.8 && orig.g > 0.8 && orig.b < 0.2) type = 'yellow';
+                                    
+                                    if (type) {
+                                        let targetOpacity = hiddenLayers.has(type) ? 0.0 : 1.0;
+                                        if (type === 'green' && !hiddenLayers.has('green')) {
+                                            targetOpacity = solderOpacity;
                                         }
+                                        
+                                        child.visible = targetOpacity > 0;
+                                        child.material.opacity = targetOpacity;
+                                        child.material.transparent = targetOpacity < 1.0;
+                                        child.material.needsUpdate = true;
                                     }
-                                });
+                                }
                             });
                         }
+
+                        if (opacitySlider) {
+                            opacitySlider.addEventListener('input', (e) => {
+                                if (opacityVal) opacityVal.innerText = Math.round(parseFloat(e.target.value) * 100) + '%';
+                                updateMaterialVisibility();
+                            });
+                        }
+
+                        document.querySelectorAll('.legend-badge').forEach(badge => {
+                            badge.addEventListener('click', (e) => {
+                                const color = e.target.dataset.color;
+                                const isHidden = hiddenLayers.has(color);
+                                
+                                if (isHidden) {
+                                    hiddenLayers.delete(color);
+                                    e.target.style.opacity = '1';
+                                    e.target.style.textDecoration = 'none';
+                                } else {
+                                    hiddenLayers.add(color);
+                                    e.target.style.opacity = '0.4';
+                                    e.target.style.textDecoration = 'line-through';
+                                }
+                                
+                                updateMaterialVisibility();
+                            });
+                        });
 
                         const searchInput = document.getElementById('searchBumpId');
                         const searchBtn = document.getElementById('searchBtn');
@@ -1806,6 +1898,17 @@ window.viewAllBumps = function(sampleId, tag) {
                             searchBtn.addEventListener('click', () => focusOnBump(searchInput.value.trim()));
                             searchInput.addEventListener('keydown', (e) => {
                                 if (e.key === 'Enter') focusOnBump(searchInput.value.trim());
+                            });
+                        }
+
+                        const exportBtn = document.getElementById('exportImageBtn');
+                        if (exportBtn) {
+                            exportBtn.addEventListener('click', () => {
+                                const dataURL = renderer.domElement.toDataURL('image/png');
+                                const link = document.createElement('a');
+                                link.href = dataURL;
+                                link.download = "${sampleId}_bump_grid.png";
+                                link.click();
                             });
                         }
 
