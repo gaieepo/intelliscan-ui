@@ -1094,7 +1094,7 @@ window.renderMetrologyCharts = function(sampleId, container, side, tag) {
                 },
                 options: {
                     maintainAspectRatio: false,
-                    layout: { padding: { top: 20 } },
+                    layout: { padding: { top: 5 } },
                     plugins: { 
                         title: { display: true, text: 'Defect Types', color: 'white' }, 
                         legend: { display: false },
@@ -1105,7 +1105,13 @@ window.renderMetrologyCharts = function(sampleId, container, side, tag) {
                             font: { weight: 'bold' }
                         }
                     },
-                    scales: { y: { ticks: { color: 'white' } }, x: { ticks: { color: 'white' } } }
+                scales: { 
+                    y: { 
+                        ticks: { color: 'white' },
+                        max: data.pie_data[1] + 5
+                    }, 
+                    x: { ticks: { color: 'white' } } 
+                }
                 }
             });
             
