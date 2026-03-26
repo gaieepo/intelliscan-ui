@@ -525,10 +525,10 @@ def get_metrology_stats(sample_id: str, tag: str | None = None):
         if "BLT" in df.columns:
             data = df["BLT"].dropna().values
             if len(data) > 0:
-                hist, bin_edges = np.histogram(data, bins=10)
+                hist, bin_edges = np.histogram(data, bins='auto')
                 stats["blt_hist"] = {
                     "counts": hist.tolist(),
-                    "labels": [f"{bin_edges[i]:.1f}-{bin_edges[i+1]:.1f}" for i in range(len(hist))]
+                    "labels": [f"{bin_edges[i]:.1f}-{bin_edges[i+1]:.0f}" for i in range(len(hist))]
                 }
         
         # 4. Void Ratio Distribution
