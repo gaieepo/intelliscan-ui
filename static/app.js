@@ -729,6 +729,7 @@ window.viewAllBumps = function(sampleId, tag) {
                     <title>All Bumps - ${sampleId}</title>
                     <style>body { margin: 0; overflow: hidden; background: #111; color: #fff; font-family: sans-serif; }</style>
                     <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+                <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.3.0/model-viewer.min.js"></script>
                     <script type="importmap">
                       {
                         "imports": {
@@ -1549,6 +1550,7 @@ window.viewAllBumps = function(sampleId, tag) {
                     <title>All Bumps - ${sampleId}</title>
                     <style>body { margin: 0; overflow: hidden; background: #111; color: #fff; font-family: sans-serif; }</style>
                     <script async src="https://unpkg.com/es-module-shims@1.6.3/dist/es-module-shims.js"></script>
+                    <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.3.0/model-viewer.min.js"></script>
                     <script type="importmap">
                       {
                         "imports": {
@@ -1593,7 +1595,17 @@ window.viewAllBumps = function(sampleId, tag) {
                                 <h4 id="bumpDetailsTitle" style="margin: 0; color: #38bdf8; font-size: 15px;">Bump Details</h4>
                                 <span id="closeDetailsBtn" style="cursor: pointer; color: #94a3b8; font-weight: bold; font-size: 14px; padding: 0 4px;">✕</span>
                             </div>
-                            <div id="bumpDetailsContent" style="min-width: 180px;"></div>
+                        <div id="bumpDetailsContent" style="min-width: 260px;">
+                            <div id="miniViewerContainer" style="display: none; margin-bottom: 12px; border-radius: 6px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.5); background-color: #0f172a; border: 1px solid #475569;">
+                                <model-viewer id="miniModelViewer" auto-rotate camera-controls style="width: 100%; height: 220px;" shadow-intensity="1"></model-viewer>
+                                <div style="padding: 6px 10px; display: flex; align-items: center; background: #1e293b; border-top: 1px solid #475569;">
+                                    <span style="font-size: 11px; color: #cbd5e1; margin-right: 8px;">Solder Opacity:</span>
+                                    <input id="miniSolderSlider" type="range" min="0" max="1" step="0.1" value="1" style="flex-grow: 1; cursor: pointer;" oninput="window.setMiniSolderOpacity(this.value)">
+                                    <span id="miniSolderOpacityVal" style="font-size: 11px; color: #cbd5e1; margin-left: 8px; min-width: 32px; text-align: right;">100%</span>
+                                </div>
+                            </div>
+                            <div id="miniMetricsContainer"></div>
+                        </div>
                         </div>
                     </div>
                     <script type="module">
@@ -1647,6 +1659,7 @@ window.viewAllBumps = function(sampleId, tag) {
                                     .then(data => {
                                         if (!data.url) return;
                                         
+                                        bump.gltfUrl = data.url; // Cache URL for the details panel
                                         const row = Math.floor(index / gridSize);
                                         const col = index % gridSize;
                                         
@@ -1880,7 +1893,10 @@ window.viewAllBumps = function(sampleId, tag) {
                                 targetControlsPos.copy(targetPos);
                                 isCameraAnimating = true;
                                 
-                                showBumpDetails(bumpId);
+                                // Defer the heavy DOM update so the camera animation starts smoothly without blocking the main thread
+                                setTimeout(() => {
+                                    showBumpDetails(bumpId);
+                                }, 150);
                                 
                                 // Visual pop effect
                                 const origScale = targetGroup.scale.clone();
@@ -1926,6 +1942,24 @@ window.viewAllBumps = function(sampleId, tag) {
                             });
                         }
                         
+                        window.setMiniSolderOpacity = function(val) {
+                            const viewer = document.getElementById('miniModelViewer');
+                            if (!viewer || !viewer.model) return;
+                            const opacity = parseFloat(val);
+                            const valSpan = document.getElementById('miniSolderOpacityVal');
+                            if (valSpan) valSpan.innerText = Math.round(opacity * 100) + '%';
+                            
+                            for (const material of viewer.model.materials) {
+                                const pbr = material.pbrMetallicRoughness;
+                                const c = pbr.baseColorFactor;
+                                const isSolder = (c[1] > 0.4 && c[0] < 0.2 && c[2] < 0.2);
+                                if (isSolder) {
+                                    pbr.setBaseColorFactor([c[0], c[1], c[2], opacity]);
+                                    material.setAlphaMode(opacity < 1.0 ? 'BLEND' : 'OPAQUE');
+                                }
+                            }
+                        };
+                        
                         function showBumpDetails(bumpId) {
                             const bump = bumps.find(b => String(b.id) === String(bumpId));
                             if (!bump) return;
@@ -1934,7 +1968,24 @@ window.viewAllBumps = function(sampleId, tag) {
                             detailsTitle.innerText = bump.label;
                             detailsTitle.style.color = isBad ? '#ef4444' : '#4ade80';
                             
-                            let html = '<table style="width: 100%; border-collapse: collapse;">';
+                            const viewerContainer = document.getElementById('miniViewerContainer');
+                            const viewer = document.getElementById('miniModelViewer');
+                            
+                            if (bump.gltfUrl) {
+                                viewerContainer.style.display = 'block';
+                                if (viewer.src !== bump.gltfUrl) {
+                                    viewer.src = bump.gltfUrl;
+                                    // Reset slider for new bump
+                                    document.getElementById('miniSolderSlider').value = 1;
+                                    document.getElementById('miniSolderOpacityVal').innerText = '100%';
+                                }
+                            } else {
+                                viewerContainer.style.display = 'none';
+                            }
+                            
+                            let html = '';
+                            
+                            html += '<table style="width: 100%; border-collapse: collapse;">';
                             if (bump.metrics) {
                                 const m = bump.metrics;
                                 html += '<tr><td style="padding: 3px 0; color: #cbd5e1;">BLT:</td><td style="text-align: right; font-weight: bold;">' + m['BLT'].toFixed(2) + ' µm</td></tr>';
@@ -1951,7 +2002,7 @@ window.viewAllBumps = function(sampleId, tag) {
                             }
                             
                             html += '</table>';
-                            detailsContent.innerHTML = html;
+                            document.getElementById('miniMetricsContainer').innerHTML = html;
                             detailsPanel.style.display = 'block';
                         }
 
