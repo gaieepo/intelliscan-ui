@@ -387,16 +387,18 @@ def get_bumps(sample_id: str, tag: str | None = None):
             try:
                 bb_str = str(row['bb'])
                 if bb_str.startswith('['):
-                    bb = ast.literal_eval(bb_str)
+                    # Clean up array string format (handles both "[1 2 3]" and "[1, 2, 3]")
+                    clean_str = bb_str.replace(',', ' ').strip('[]')
+                    bb = [float(val) for val in clean_str.split()]
                     # bb is [xmin, xmax, ymin, ymax, zmin, zmax]
                     cx = (bb[0] + bb[1]) / 2
                     cy = (bb[2] + bb[3]) / 2
                     # Use top of the bump (zmax) for better visibility
                     cz = bb[5]
                     
-                    c_world = nib.affines.apply_affine(affine, np.array([[cx, cy, cz]]))[0]
-                    
-                    item['position'] = {'x': c_world[0], 'y': c_world[1], 'z': c_world[2]}
+                    # Use raw voxel coordinates. PyVista GLTF meshes are extracted 
+                    # natively from the array without affine transformations.
+                    item['position'] = {'x': cx, 'y': cy, 'z': cz}
             except Exception:
                 pass
         
