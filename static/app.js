@@ -722,6 +722,30 @@ window.viewAllBumps = function(sampleId, tag) {
             const allBumps = [...bumps.good, ...bumps.bad];
             const badIds = new Set(bumps.bad.map(b => b.id));
             
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+            let minZ = Infinity, maxZ = -Infinity;
+
+            allBumps.forEach(b => {
+                if (b.position) {
+                    minX = Math.min(minX, b.position.x);
+                    maxX = Math.max(maxX, b.position.x);
+                    minY = Math.min(minY, b.position.y);
+                    maxY = Math.max(maxY, b.position.y);
+                    minZ = Math.min(minZ, b.position.z);
+                    maxZ = Math.max(maxZ, b.position.z);
+                }
+            });
+
+            const centerX = minX !== Infinity ? (minX + maxX) / 2 : 0;
+            const centerY = minY !== Infinity ? (minY + maxY) / 2 : 0;
+            const centerZ = minZ !== Infinity ? (minZ + maxZ) / 2 : 0;
+
+            const extentX = maxX !== Infinity ? (maxX - minX) : 100;
+            const extentY = maxY !== Infinity ? (maxY - minY) : 100;
+            const maxExtent = Math.max(extentX, extentY) || 100;
+            const posScale = 100.0 / maxExtent;
+
             win.document.write(`
                 <!DOCTYPE html>
                 <html>
@@ -757,7 +781,8 @@ window.viewAllBumps = function(sampleId, tag) {
                         scene.background = new THREE.Color(0x111111);
                         
                         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-                        camera.position.set(0, 40, 40);
+                        camera.up.set(0, 0, 1); // Set Z as the vertical axis to match NIfTI/GLTF native space
+                        camera.position.set(0, -60, 60); // View from a top-angled isometric perspective
                         
                         const renderer = new THREE.WebGLRenderer({ antialias: true });
                         renderer.setSize(window.innerWidth, window.innerHeight);
@@ -769,7 +794,7 @@ window.viewAllBumps = function(sampleId, tag) {
                         const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
                         scene.add(ambientLight);
                         const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-                        dirLight.position.set(10, 20, 10);
+                        dirLight.position.set(10, -10, 20);
                         scene.add(dirLight);
 
                         const loader = new GLTFLoader();
@@ -778,8 +803,10 @@ window.viewAllBumps = function(sampleId, tag) {
                         const bumps = ${JSON.stringify(allBumps)};
                         const badIds = new Set(${JSON.stringify([...badIds])});
                         
-                        const gridSize = Math.ceil(Math.sqrt(bumps.length));
-                        const spacing = 4.0;
+                        const centerX = ${centerX};
+                        const centerY = ${centerY};
+                        const centerZ = ${centerZ};
+                        const posScale = ${posScale};
                         
                         // Load font for labels
                         fontLoader.load('https://unpkg.com/three@0.154.0/examples/fonts/helvetiker_regular.typeface.json', (font) => {
@@ -793,42 +820,53 @@ window.viewAllBumps = function(sampleId, tag) {
                                     .then(data => {
                                         if (!data.url) return;
                                         
-                                        const row = Math.floor(index / gridSize);
-                                        const col = index % gridSize;
-                                        const x = (col - gridSize/2) * spacing;
-                                        const z = (row - gridSize/2) * spacing;
+                                        let x = 0, y = 0, z = 0;
+                                        const explodeFactor = 2.5; // Increases grid spacing to prevent congestion
+                                        if (bump.position) {
+                                            x = (bump.position.x - centerX) * posScale * explodeFactor;
+                                            y = (bump.position.y - centerY) * posScale * explodeFactor;
+                                            z = (bump.position.z - centerZ) * posScale * explodeFactor;
+                                        }
                                         
                                         loader.load(data.url, (gltf) => {
                                             const model = gltf.scene;
                                             const box = new THREE.Box3().setFromObject(model);
+                                            const size = new THREE.Vector3();
+                                            box.getSize(size);
                                             const center = box.getCenter(new THREE.Vector3());
-                                            model.position.sub(center); // Center geometry
+                                            
+                                            model.scale.set(posScale, posScale, posScale);
+                                            model.position.copy(center).multiplyScalar(-posScale);
                                             
                                             const group = new THREE.Group();
                                             group.add(model);
-                                            group.position.set(x, 0, z);
+                                            group.position.set(x, y, z);
+                                            
+                                            const scaledMaxDim = Math.max(size.x, size.y, size.z) * posScale || 2.0;
+                                            const ringRadius = scaledMaxDim * 0.6;
                                             
                                             // Status Ring
                                             const isBad = badIds.has(bump.id);
                                             const color = isBad ? 0xef4444 : 0x4ade80;
-                                            const ringGeo = new THREE.RingGeometry(1.2, 1.3, 32);
+                                            const ringGeo = new THREE.RingGeometry(ringRadius, ringRadius * 1.1, 32);
                                             const ringMat = new THREE.MeshBasicMaterial({ color: color, side: THREE.DoubleSide });
                                             const ring = new THREE.Mesh(ringGeo, ringMat);
-                                            ring.rotation.x = -Math.PI / 2;
                                             group.add(ring);
 
                                             // Text Label
                                             const labelText = bump.label.replace('Bump ', ''); // Turns "Bump 12 (Void)" into "12 (Void)"
+                                            const textScale = scaledMaxDim * 0.15;
                                             const textGeo = new TextGeometry(labelText, {
                                                 font: font,
-                                                size: 0.3,
-                                                height: 0.05,
+                                                size: textScale,
+                                                height: textScale * 0.2,
                                             });
                                             textGeo.computeBoundingBox();
                                             const textWidth = textGeo.boundingBox.max.x - textGeo.boundingBox.min.x;
                                             const textMat = new THREE.MeshBasicMaterial({ color: isBad ? 0xffcccc : 0xffffff });
                                             const textMesh = new THREE.Mesh(textGeo, textMat);
-                                            textMesh.position.set(-textWidth / 2, 2.0, 0); // Position above bump
+                                            textMesh.position.set(-textWidth / 2, 0, scaledMaxDim * 0.7); // Position above bump in Z
+                                            textMesh.rotation.x = Math.PI / 2; // Tilt text to face the angled camera
                                             
                                             group.add(textMesh);
                                             
@@ -1105,7 +1143,7 @@ window.renderMetrologyCharts = function(sampleId, container, side, tag) {
                             font: { weight: 'bold' }
                         }
                     },
-                scales: { 
+                    scales: { 
                     y: { 
                         ticks: { color: 'white' },
                         max: data.pie_data[1] + 5
@@ -1549,6 +1587,30 @@ window.viewAllBumps = function(sampleId, tag) {
             const allBumps = [...bumps.good, ...bumps.bad];
             const badIds = new Set(bumps.bad.map(b => b.id));
             
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+            let minZ = Infinity, maxZ = -Infinity;
+
+            allBumps.forEach(b => {
+                if (b.position) {
+                    minX = Math.min(minX, b.position.x);
+                    maxX = Math.max(maxX, b.position.x);
+                    minY = Math.min(minY, b.position.y);
+                    maxY = Math.max(maxY, b.position.y);
+                    minZ = Math.min(minZ, b.position.z);
+                    maxZ = Math.max(maxZ, b.position.z);
+                }
+            });
+
+            const centerX = minX !== Infinity ? (minX + maxX) / 2 : 0;
+            const centerY = minY !== Infinity ? (minY + maxY) / 2 : 0;
+            const centerZ = minZ !== Infinity ? (minZ + maxZ) / 2 : 0;
+
+            const extentX = maxX !== Infinity ? (maxX - minX) : 100;
+            const extentY = maxY !== Infinity ? (maxY - minY) : 100;
+            const maxExtent = Math.max(extentX, extentY) || 100;
+            const posScale = 100.0 / maxExtent;
+
             win.document.write(`
                 <!DOCTYPE html>
                 <html>
@@ -1646,13 +1708,15 @@ window.viewAllBumps = function(sampleId, tag) {
                         const bumps = ${JSON.stringify(allBumps)};
                         const badIds = new Set(${JSON.stringify([...badIds])});
                         
+                        const centerX = ${centerX};
+                        const centerY = ${centerY};
+                        const centerZ = ${centerZ};
+                        const posScale = ${posScale};
+
                         const goodBumpGroups = [];
                         const badBumpGroups = [];
 
                         let isColorCoded = false;
-
-                        const gridSize = Math.ceil(Math.sqrt(bumps.length));
-                        const spacing = 6.0; // Increased spacing
                         
                         // Load font for labels
                         fontLoader.load('https://unpkg.com/three@0.154.0/examples/fonts/helvetiker_regular.typeface.json', (font) => {
@@ -1666,12 +1730,14 @@ window.viewAllBumps = function(sampleId, tag) {
                                         if (!data.url) return;
                                         
                                         bump.gltfUrl = data.url; // Cache URL for the details panel
-                                        const row = Math.floor(index / gridSize);
-                                        const col = index % gridSize;
                                         
-                                        // Center the grid around (0,0)
-                                        const x = (col - (gridSize - 1) / 2) * spacing;
-                                        const z = (row - (gridSize - 1) / 2) * spacing;
+                                        let x = 0, y = 0, z = 0;
+                                        const explodeFactor = 2.5; // Increases grid spacing to prevent congestion
+                                        if (bump.position) {
+                                            x = (bump.position.x - centerX) * posScale * explodeFactor;
+                                            y = (bump.position.z - centerZ) * posScale * explodeFactor; // Voxel Z mapped to Three Y
+                                            z = -(bump.position.y - centerY) * posScale * explodeFactor; // Voxel Y mapped to Three -Z
+                                        }
                                         
                                         loader.load(data.url, (gltf) => {
                                             const model = gltf.scene;
@@ -1683,21 +1749,18 @@ window.viewAllBumps = function(sampleId, tag) {
                                             const center = new THREE.Vector3();
                                             box.getCenter(center);
                                             
-                                            // 1. Scale model to fit in a 4x4x4 box
                                             const maxDim = Math.max(size.x, size.y, size.z) || 1;
-                                            const scaleFactor = 4.0 / maxDim;
-                                            model.scale.set(scaleFactor, scaleFactor, scaleFactor);
                                             
-                                            // 2. Center model geometry at (0,0,0) locally
-                                            // We subtract the scaled center
-                                            model.position.copy(center).multiplyScalar(-scaleFactor);
+                                            // Scale and center geometry to match actual physical spacing
+                                            model.scale.set(posScale, posScale, posScale);
+                                            model.position.copy(center).multiplyScalar(-posScale);
                                             
                                             const group = new THREE.Group();
                                             group.add(model);
                                             
                                             const isBad = badIds.has(bump.id);
                                             group.userData = { id: bump.id, isBad: isBad };
-                                            group.position.set(x, 0, z);
+                                            group.position.set(x, y, z);
                                             
                                             // Cache original colors and apply initial state
                                             model.traverse((child) => {
@@ -1710,9 +1773,12 @@ window.viewAllBumps = function(sampleId, tag) {
                                                 }
                                             });
 
+                                            const scaledMaxDim = maxDim * posScale || 4.0;
+                                            const ringRadius = scaledMaxDim * 0.6;
+
                                             // Status Ring
                                             const color = isBad ? 0xef4444 : 0x4ade80;
-                                            const ringGeo = new THREE.RingGeometry(2.2, 2.4, 32);
+                                            const ringGeo = new THREE.RingGeometry(ringRadius, ringRadius * 1.1, 32);
                                             const ringMat = new THREE.MeshBasicMaterial({ color: color, side: THREE.DoubleSide });
                                             const ring = new THREE.Mesh(ringGeo, ringMat);
                                             ring.rotation.x = -Math.PI / 2;
@@ -1722,16 +1788,17 @@ window.viewAllBumps = function(sampleId, tag) {
 
                                             // Text Label
                                             const labelText = bump.label.replace('Bump ', ''); // Turns "Bump 12 (Void)" into "12 (Void)"
+                                            const textScale = scaledMaxDim * 0.15;
                                             const textGeo = new TextGeometry(labelText, {
                                                 font: font,
-                                                size: 0.3,
-                                                height: 0.05,
+                                                size: textScale,
+                                                height: textScale * 0.2,
                                             });
                                             textGeo.computeBoundingBox();
                                             const textWidth = textGeo.boundingBox.max.x - textGeo.boundingBox.min.x;
                                             const textMat = new THREE.MeshBasicMaterial({ color: isBad ? 0xffcccc : 0xffffff });
                                             const textMesh = new THREE.Mesh(textGeo, textMat);
-                                            textMesh.position.set(-textWidth / 2, 2.5, 0); // Position above bump
+                                            textMesh.position.set(-textWidth / 2, scaledMaxDim * 0.7, 0); // Position above bump
                                             textMesh.name = 'statusText';
                                             textMesh.visible = isColorCoded;
                                             
