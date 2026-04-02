@@ -11,66 +11,6 @@ const currentSamples = { left: { id: null, tag: null }, right: { id: null, tag: 
 const detectionCache = {}; // Stores detection data per sample
 const detectionState = { left: { view: 'view1', slice: 0 }, right: { view: 'view1', slice: 0 } };
 
-// Inject CSS for bump markers
-const markerStyleId = 'bump-marker-styles';
-if (!document.getElementById(markerStyleId)) {
-    const style = document.createElement('style');
-    style.id = markerStyleId;
-    style.innerHTML = `
-        @keyframes pulse-ring {
-            0% { transform: scale(0.33); opacity: 1; }
-            80%, 100% { transform: scale(2.0); opacity: 0; }
-        }
-        @keyframes pulse-dot {
-            0% { transform: translate(-50%, -50%) scale(0.8); }
-            50% { transform: translate(-50%, -50%) scale(1.2); }
-            100% { transform: translate(-50%, -50%) scale(0.8); }
-        }
-        @keyframes bounce-arrow {
-            0%, 100% { transform: translateX(-50%) translateY(0); }
-            50% { transform: translateX(-50%) translateY(-15px); }
-        }
-        .bump-marker-container {
-            position: relative;
-            width: 40px;
-            height: 40px;
-            transform: translate(-50%, -50%);
-            pointer-events: none;
-        }
-        .bump-ring {
-            position: absolute;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            border: 2px solid #ffff00;
-            border-radius: 50%;
-            animation: pulse-ring 1.5s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
-            box-shadow: 0 0 8px #ffff00;
-            background-color: rgba(255, 255, 0, 0.3);
-        }
-        .bump-dot {
-            position: absolute;
-            top: 50%; left: 50%;
-            width: 8px; height: 8px;
-            background: #ffff00;
-            border-radius: 50%;
-            transform: translate(-50%, -50%);
-            animation: pulse-dot 1.5s cubic-bezier(0.455, 0.03, 0.515, 0.955) -0.4s infinite;
-        }
-        .bump-arrow-static {
-            position: absolute;
-            top: -35px;
-            left: 50%;
-            transform: translateX(-50%);
-            color: #ffff00;
-            font-size: 24px;
-            font-weight: bold;
-            text-shadow: 0 0 4px #000;
-            animation: bounce-arrow 1s ease-in-out infinite;
-        }
-    `;
-    document.head.appendChild(style);
-}
-
 /**
  * Handle the upload button click.
  * 1. Uploads the file to /api/upload
@@ -444,13 +384,15 @@ function updatePhaseUI(side, phase, status, data, sampleId, duration, tag) {
                                             id="${viewerId}"
                                             src="${data.url}" 
                                             alt="3D Segmentation" 
+                                            camera-controls
                                             auto-rotate 
-                                            camera-controls 
+                                            camera-up="Z"
                                             style="width: 100%; height: 500px; background-color: #0f172a; border-radius: 8px;"
                                             shadow-intensity="1"
                                             exposure="1.2"
                                         ></model-viewer>
-                                        <button class="btn btn-sm btn-outline-light position-absolute top-0 end-0 m-2" style="z-index: 10; font-size: 0.7rem;" onclick="const mv = document.getElementById('${viewerId}'); mv.cameraTarget = 'auto'; mv.fieldOfView = 'auto'; const h = mv.querySelector('.bump-indicator'); if(h) h.remove();">
+                                        <button class="btn btn-sm btn-outline-light position-absolute top-0 end-0 m-2" style="z-index: 10; font-size: 0.7rem;" onclick="const mv = document.getElementById('${viewerId}'); mv.cameraTarget = 'auto'; mv.fieldOfView = 'auto'; const h = mv.querySelector('.bump-highlight-hotspot'); if(h) h.remove();">
+                                        <button class="btn btn-sm btn-outline-light position-absolute top-0 end-0 m-2" style="z-index: 10; font-size: 0.7rem;" onclick="const mv = document.getElementById('${viewerId}'); mv.cameraTarget = 'auto'; mv.fieldOfView = 'auto';">
                                             Reset View
                                         </button>
                                     </div>
@@ -850,7 +792,7 @@ window.viewAllBumps = function(sampleId, tag) {
                                             const color = isBad ? 0xef4444 : 0x4ade80;
                                             const ringGeo = new THREE.RingGeometry(ringRadius, ringRadius * 1.1, 32);
                                             const ringMat = new THREE.MeshBasicMaterial({ color: color, side: THREE.DoubleSide });
-                                            const ring = new THREE.Mesh(ringGeo, ringMat);
+                                            const ring = new THREE.Mesh(ringGeo, ringMat);  
                                             group.add(ring);
 
                                             // Text Label
@@ -959,71 +901,8 @@ window.loadBumpModel = function(sampleId, selectOrId, viewerId, tag) {
         .finally(() => {
             viewer.style.opacity = '1';
             if (loader && viewer.src) loader.style.display = 'none';
-        });
-        
-    // Focus main model on the selected bump
-    if (position) {
-        const side = viewerId.includes('left') ? 'left' : 'right';
-        const mainViewer = document.getElementById(`seg-viewer-${side}`);
-        if (mainViewer) {
-            mainViewer.cameraTarget = `${position.x}m ${position.y}m ${position.z}m`;
-            mainViewer.fieldOfView = '20deg'; // Zoom in (slightly wider to see context)
-            
-            // Add visual indicator
-            const existing = mainViewer.querySelector('.bump-indicator');
-            if (existing) existing.remove();
-            
-            const hotspot = document.createElement('button');
-            hotspot.className = 'bump-indicator';
-            hotspot.slot = 'hotspot-selected';
-            hotspot.dataset.position = `${position.x}m ${position.y}m ${position.z}m`;
-            
-            // Reset default button styles
-            hotspot.style.display = 'block';
-            hotspot.style.background = 'transparent';
-            hotspot.style.border = 'none';
-            hotspot.style.padding = '0';
-            hotspot.style.width = '20px';
-            hotspot.style.height = '20px';
-            hotspot.style.cursor = 'pointer';
-
-            hotspot.innerHTML = `
-                <div class="bump-marker-container">
-                    <div class="bump-ring"></div>
-                    <div class="bump-dot"></div>
-                    <div class="bump-arrow-static">▼</div>
-                </div>
-                <div class="bump-tooltip" style="
-                    position: absolute; 
-                    top: -45px; 
-                    left: 50%; 
-                    transform: translateX(-50%); 
-                    background: rgba(0, 0, 0, 0.8); 
-                    color: white; 
-                    padding: 4px 8px; 
-                    border-radius: 4px; 
-                    font-size: 12px; 
-                    white-space: nowrap; 
-                    pointer-events: none; 
-                    opacity: 0; 
-                    transition: opacity 0.2s;">
-                    Bump ${bumpId}
-                </div>
-            `;
-            
-            // Add hover listeners
-            hotspot.addEventListener('mouseenter', () => {
-                const tip = hotspot.querySelector('.bump-tooltip');
-                if(tip) tip.style.opacity = '1';
-            });
-            hotspot.addEventListener('mouseleave', () => {
-                const tip = hotspot.querySelector('.bump-tooltip');
-                if(tip) tip.style.opacity = '0';
-            });
-            
-            mainViewer.appendChild(hotspot);
-        }
-    }
+        });    
+    // The connection to the main viewer (zoom/highlight) has been removed.
 }
 
 /**
