@@ -218,6 +218,22 @@ def list_jobs():
 def list_models():
     return {"models": get_available_models()}
 
+@app.get("/logo.png")
+def get_logo():
+    """Serve the application logo from the root directory."""
+    logo_path = BASE_DIR / "logo.png"
+    if logo_path.exists():
+        return FileResponse(logo_path)
+    raise HTTPException(status_code=404, detail="Logo not found")
+
+@app.get("/icon.png")
+def get_icon():
+    """Serve the application icon from the root directory."""
+    icon_path = BASE_DIR / "icon.png"
+    if icon_path.exists():
+        return FileResponse(icon_path)
+    raise HTTPException(status_code=404, detail="Icon not found")
+
 @app.get("/api/status/{sample_id}")
 def get_sample_status(sample_id: str, tag: str | None = None):
     """Check the processing status of a sample by inspecting output files."""
