@@ -707,7 +707,10 @@ window.viewAllBumps = function(sampleId, tag) {
                 </head>
                 <body>
                     <div style="position: absolute; top: 10px; left: 10px; z-index: 100; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 4px;">
-                        <h3 style="margin: 0 0 5px;">${sampleId} Bump Grid</h3>
+                        <div style="display: flex; align-items: center; margin-bottom: 5px;">
+                            <img src="/logo.png" alt="Logo" style="height: 150px; margin-right: 15px; border-radius: 4px;" onerror="this.style.display='none'">
+                            <h3 style="margin: 0;">${sampleId} Bump Grid</h3>
+                        </div>
                         <span style="color: #4ade80">● Good: ${bumps.good.length}</span> | 
                         <span style="color: #ef4444">● Defective: ${bumps.bad.length}</span>
                         <div class="small" style="margin-top: 5px; color: #aaa;">Left Click: Rotate | Right Click: Pan | Scroll: Zoom</div>
@@ -1408,6 +1411,20 @@ window.handleUpload = handleUpload;
 
 // Initialize listeners for dynamic status checking
 document.addEventListener('DOMContentLoaded', () => {
+    // Dynamically inject the logo into the main navbar if it exists
+    const navbarBrand = document.querySelector('.navbar-brand');
+    if (navbarBrand && !document.getElementById('app-logo')) {
+        const logoImg = document.createElement('img');
+        logoImg.id = 'app-logo';
+        logoImg.src = '/logo.png';
+        logoImg.alt = '3D-IntelliScan Logo';
+        logoImg.style.height = '150px';
+        logoImg.style.marginRight = '12px';
+        logoImg.style.borderRadius = '4px';
+        logoImg.onerror = () => logoImg.style.display = 'none'; // Failsafe if image is missing
+        navbarBrand.prepend(logoImg);
+    }
+
     // Dynamically fetch and populate available models
     fetch('/api/models')
         .then(res => res.json())
